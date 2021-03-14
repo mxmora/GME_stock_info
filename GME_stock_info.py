@@ -83,7 +83,6 @@ class Ticker:
 
     def PrintTicker(self):
 
-
         if self.lastVal == self.currentVal:
             tickerDirection = ' '
             txtColor1 = rst
@@ -117,8 +116,8 @@ class Ticker:
             self.aftermarket = 1
             self.aftermarketPrice = si.get_postmarket_price(self.tickerSymbol)
 
-        self.percentChange = ((self.currentVal - self.tickerPrevClose) / self.tickerPrevClose) * 100
-        self.percentChangeSinceOpen = ((self.currentVal - self.tickerOpen) / self.tickerOpen) * 100
+        self.percentChange = 0 if self.tickerPrevClose == 0 else ((self.currentVal - self.tickerPrevClose) / self.tickerPrevClose) * 100
+        self.percentChangeSinceOpen = 0 if self.tickerOpen == 0 else ((self.currentVal - self.tickerOpen) / self.tickerOpen) * 100
 
 
 pre_market = 0
