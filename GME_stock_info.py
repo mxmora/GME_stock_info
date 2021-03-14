@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
+# version 1.0 3-19-2021
+# Gets the ticker info for GME, APPL, TSLA and AMC
+# purpose is to have it running in the background to keep track of any movement.
+# plan to add other features like any number of tickers, saved config and alert on fast movements in case you want to make a move.
+# this was designed to run in a terminal on Mac OS with green text on black background. It's a one off script
 
 # import stock_info module from yahoo_fin
 from yahoo_fin import stock_info as si
 import time
 import datetime
 
-
+# current list of tickers
 kGME = 'gme'
 kAAPL = 'aapl'
 kTSLA = 'tsla'
@@ -18,7 +23,7 @@ tickerList = {
     kAMC: 'GME '
 }
 
-# term codes
+# term codes for setting text colors
 rst = '\033[0m'
 bold = '\033[01m'
 disable = '\033[02m'
@@ -29,32 +34,32 @@ invisible = '\033[08m'
 
 
 class fg:
-    black='\033[30m'
-    red='\033[31m'
-    green='\033[32m'
-    orange='\033[33m'
-    blue='\033[34m'
-    purple='\033[35m'
-    cyan='\033[36m'
-    lightgrey='\033[37m'
-    darkgrey='\033[90m'
-    lightred='\033[91m'
-    lightgreen='\033[92m'
-    yellow='\033[93m'
-    lightblue='\033[94m'
-    pink='\033[95m'
-    lightcyan='\033[96m'
+    black = '\033[30m'
+    red = '\033[31m'
+    green = '\033[32m'
+    orange = '\033[33m'
+    blue = '\033[34m'
+    purple = '\033[35m'
+    cyan = '\033[36m'
+    lightgrey ='\033[37m'
+    darkgrey ='\033[90m'
+    lightred ='\033[91m'
+    lightgreen ='\033[92m'
+    yellow ='\033[93m'
+    lightblue ='\033[94m'
+    pink ='\033[95m'
+    lightcyan ='\033[96m'
 
 
 class bg:
-    black='\033[40m'
-    red='\033[41m'
-    green='\033[42m'
-    orange='\033[43m'
-    blue='\033[44m'
-    purple='\033[45m'
-    cyan='\033[46m'
-    lightgrey='\033[47m'
+    black = '\033[40m'
+    red = '\033[41m'
+    green = '\033[42m'
+    orange = '\033[43m'
+    blue = '\033[44m'
+    purple = '\033[45m'
+    cyan = '\033[46m'
+    lightgrey = '\033[47m'
 
 
 class Ticker:
