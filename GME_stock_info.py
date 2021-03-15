@@ -73,9 +73,20 @@ class Ticker:
         self.tickerSymbol = sym
         self.tickerName = name
         self.percentChangeSinceOpen = 0
+        self.percentChangeSinceClose = 0
         self.percentChange = 0
         self.aftermarketPrice = 0
         self.aftermarket = 0
+        self.quoteData = 0
+        self.regularMarketDayHigh = 0
+        self.regularMarketDayLow = 0
+        self.previousClose = 0
+
+    def __repr__(self):
+        return "Ticker('{}', {})".format(self.tickerName,self.tickerSymbol)
+
+    def __str__(self):
+        return "{}: '{}' ${} open:{} ".format(self.tickerName, self.tickerSymbol, self.currentVal, self.tickerOpen)
 
     def Print(self):
         print('Name: %s' % self.tickerName)
@@ -107,19 +118,25 @@ class Ticker:
             txtColor2 = fg.lightgreen
 
         if self.aftermarket:
-            fmt = '%s: ' + txtColor2 + '%8.2f ' + txtColor1 + '%s' + rst + '   [' + txtColor2 + '%7.2f %5.1f%% %s ' + rst + '] after: %8.2f'
-            print( fmt % (self.tickerName, self.currentVal, tickerDirection, self.tickerPrevClose, self.percentChange, prevCloseDirection,self.aftermarketPrice))
+            fmt = '%s: ' + txtColor2 + '%8.2f ' + txtColor1 + '%s' + rst + '   [' + txtColor2 + '%7.2f %5.1f%% %s ' + rst + '] after: %8.2f %5.1f%%'
+            print(fmt % (self.tickerName, self.currentVal, tickerDirection, self.tickerPrevClose, self.percentChange, prevCloseDirection, self.aftermarketPrice, self.percentChangeSinceClose))
         else:
-            fmt = '%s: ' + txtColor2 + '%8.2f ' + txtColor1 + '%s' + rst + '   [' + txtColor2 + '%7.2f %5.1f%% %s ' + rst + ']'
-            print(fmt  % ( self.tickerName, self.currentVal, tickerDirection, self.tickerPrevClose, self.percentChange, prevCloseDirection))
+            fmt = '%s: ' + txtColor2 + '%8.2f ' + txtColor1 + '%s' + rst + '   [' + txtColor2 + '%7.2f %5.1f%% %s ' + rst + '] [ %6.2f - %6.2f]'
+            print(fmt % (self.tickerName, self.currentVal, tickerDirection, self.tickerPrevClose, self.percentChange, prevCloseDirection, self.regularMarketDayLow, self.regularMarketDayHigh))
 
     def Update(self):
         self.updateTime = datetime.datetime.now()
         self.lastVal = self.currentVal
         self.currentVal = si.get_live_price(self.tickerSymbol)
+        self.quoteData = si.get_quote_data(self.tickerSymbol)
+        self.regularMarketDayLow = self.quoteData['regularMarketDayLow']
+        self.regularMarketDayHigh = self.quoteData['regularMarketDayHigh']
+
         if isPostMarket():
             self.aftermarket = 1
             self.aftermarketPrice = si.get_postmarket_price(self.tickerSymbol)
+            self.previousClose = self.currentVal
+            self.percentChangeSinceClose = 0 if self.tickerOpen == 0 else ((self.aftermarketPrice - self.previousClose) / self.previousClose) * 100
 
         self.percentChange = 0 if self.tickerPrevClose == 0 else ((self.currentVal - self.tickerPrevClose) / self.tickerPrevClose) * 100
         self.percentChangeSinceOpen = 0 if self.tickerOpen == 0 else ((self.currentVal - self.tickerOpen) / self.tickerOpen) * 100
@@ -216,6 +233,8 @@ myAAPL = Ticker('AAPL', kAAPL)
 myTSLA = Ticker('TSLA', kTSLA)
 myAMC = Ticker('AMC ', kAMC)
 
+print(myGME)
+
 if isPreMarket():
     print('GME PRE: %f' % si.get_premarket_price(kGME))
 
@@ -227,6 +246,9 @@ if isPostMarket() or isRegularMarket():
     the_aapl_list = si.get_quote_data(kAAPL)
     the_tsla_list = si.get_quote_data(kTSLA)
     the_amc_list = si.get_quote_data(kAMC)
+
+   # print(the_gme_list)
+
 
     myGME.tickerStat = the_gme_list 
     myAAPL.tickerStat = the_aapl_list
