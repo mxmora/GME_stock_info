@@ -17,11 +17,13 @@ kAMC = 'amc'
 kWaitTime = 5
 
 tickerList = {
-    kGME: 'GME ',
-    kAAPL: 'AAPL ',
-    kTSLA: 'TSLA ',
-    kAMC: 'GME '
+    kGME: 'GameStop ',
+    kAAPL: 'Apple ',
+    kTSLA: 'Tesla ',
+    kAMC: 'AMC Corp'
 }
+
+headerStr = f"  Price        Open    % Chg          Lo  -  Hi            Volume"
 
 # term codes for setting text colors
 rst = '\033[0m'
@@ -32,9 +34,11 @@ reverse = '\033[07m'
 strikethrough = '\033[09m'
 invisible = '\033[08m'
 
+# Default update rate
+updateRate = kWaitTime
 
 # handle argument parsing
-parser = argparse.ArgumentParser(description='Show a list of tickers. defualt is GME,APPL,TSLA and AMC')
+parser = argparse.ArgumentParser(description='Show a list of tickers. default is GME,APPL,TSLA and AMC')
 parser.add_argument('--verbose', help='verbose output', action='store_true')
 parser.add_argument('tickers', metavar='N', type=str, nargs='*',help='tickers')
 
@@ -46,8 +50,15 @@ if args.tickers:
     newTickerList = args.tickers
     for name in newTickerList:
         quoteData = si.get_quote_data(name)
-        theTickers[name] = quoteData['displayName']
-        print(quoteData)
+#        print(quoteData)
+        try:
+            theTickers[name] = quoteData['displayName']
+        except KeyError:
+            print('no displayName')
+            tempStr = quoteData['shortName']
+            theTickers[name] = tempStr[0:16]
+        
+#        print(quoteData)
     print(theTickers)
 else:
     theTickers = tickerList
@@ -109,7 +120,8 @@ class Ticker:
         self.lastRegularMarketDayLow = 0
         self.lastRegularMarketDayHigh = 0
         self.timeToPrint = 0
-
+        self.marketVolume = 0
+        
     def __repr__(self):
         return "Ticker('{}', {})".format(self.tickerName,self.tickerSymbol)
 
@@ -173,27 +185,30 @@ class Ticker:
             prevCloseDirection = upArrow
             txtColor2 = fg.lightgreen
 
+        fmt2 = f"{self.tickerName:<18} {txtColor2}{self.currentVal:8.2f} "
+        fmt2 += f"{txtColor1}{tickerDirection} {rst} "
+        fmt2 += f" [{txtColor2}{self.tickerPrevClose:7.2f} {self.percentChange:5.1f}% {prevCloseDirection} {rst}]"
+
         if self.aftermarket:
-            fmt2 = f"{self.tickerName} {txtColor2}{self.currentVal:8.2f} "
-            fmt2 += f"{txtColor1}{tickerDirection} {rst} "
-            fmt2 += f" [{txtColor2}{self.tickerPrevClose:7.2f} {self.percentChange:5.1f}% {prevCloseDirection} {rst}]"
-            fmt2 += f" after: {self.aftermarketPrice:8.2f} {self.percentChangeSinceClose:5.1f}%"
-            print(fmt2)
+            fmt2 += f" {self.aftermarketPrice:8.2f} {self.percentChangeSinceClose:5.1f}%"
+            #print(fmt2)
 
         else:
             # fmt = '%s: ' + txtColor2 + '%8.2f ' + txtColor1 + '%s' + rst + '   [' + txtColor2 + '%7.2f %5.1f%% %s ' + rst + '] [ %6.2f - %6.2f] %s%s %s' + rst
             tempName = self.tickerName + '              '
 
-            fmt2 = f"{self.tickerName:<17} {txtColor2} {self.currentVal:8.2f} "
-            fmt2 += f"{txtColor1}{tickerDirection} {rst} "
-            fmt2 += f" [{txtColor2}{self.tickerPrevClose:7.2f} {self.percentChange:5.1f}% {prevCloseDirection} {rst}]"
+            # fmt2 = f"{self.tickerName:<17} {txtColor2} {self.currentVal:8.2f} "
+            #  fmt2 += f"{txtColor1}{tickerDirection} {rst} "
+            # fmt2 += f" [{txtColor2}{self.tickerPrevClose:7.2f} {self.percentChange:5.1f}% {prevCloseDirection} {rst}]"
+            fmt2 += f" [ {self.regularMarketDayLow:7.2f} - {self.regularMarketDayHigh:7.2f} ] {rst}"
+            fmt2 += f" {self.marketVolume:>12,d} "
             fmt2 += f" {newMarketColor}{newMarketStr}{newMarketDir} {rst}"
 
-            # print(fmt % (self.tickerName, self.currentVal, tickerDirection, self.tickerPrevClose, self.percentChange, prevCloseDirection, self.regularMarketDayLow, self.regularMarketDayHigh,newMarketColor,newMarketStr,newMarketDir))
-            print(fmt2)
+        print(fmt2)
 
 
     def Update(self):
+        global headerStr
         self.updateTime = datetime.datetime.now()
         self.lastVal = self.currentVal
         self.currentVal = si.get_live_price(self.tickerSymbol)
@@ -205,6 +220,8 @@ class Ticker:
         if self.tickerOpen == 0:
             self.tickerOpen = self.quoteData['regularMarketOpen']
 
+        self.marketVolume = self.quoteData['regularMarketVolume']
+            
         if self.tickerPrevClose == 0:
             self.tickerPrevClose = self.quoteData['regularMarketPreviousClose']
 
@@ -220,6 +237,8 @@ class Ticker:
             self.aftermarketPrice = si.get_postmarket_price(self.tickerSymbol)
             self.previousClose = self.currentVal
             self.percentChangeSinceClose = 0 if self.tickerOpen == 0 else ((self.aftermarketPrice - self.previousClose) / self.previousClose) * 100
+            headerStr = f"  Price        Open   % Chg      After Hours "
+
 
         self.lastPercentChange = self.percentChange
         self.percentChange = 0 if self.tickerPrevClose == 0 else ((self.currentVal - self.tickerPrevClose) / self.tickerPrevClose) * 100
@@ -231,13 +250,9 @@ post_market = 0
 market_closed = 0
 regular_market = 0
 
+
 downArrow = '⬇'
 upArrow = '⬆'
-
-
-# ------------------------------------------
-def percentChange( init, current):
-    return ((current - init) / init) * 100
 
 
 # ------------------------------------------
@@ -260,6 +275,7 @@ def isRegularMarket():
     return regular_market
 
 
+# ------------------------------------------
 def UpdateMarketStatus():
     global pre_market
     global post_market
@@ -311,14 +327,7 @@ gTickers = []
 for ticker, name in theTickers.items():
     gTickers.append(Ticker(name, ticker))
 
-
-# Build our tickers
-# myGME = Ticker('GME ', kGME)
-# myAAPL = Ticker('AAPL', kAAPL)
-# myTSLA = Ticker('TSLA', kTSLA)
-# myAMC = Ticker('AMC ', kAMC)
-
-# print(myGME)
+headerStr = f"   Price        Open    % Chg          Lo  -  Hi            Volume"
 
 if isPreMarket():
     print('GME PRE: %f' % si.get_premarket_price(kGME))
@@ -326,78 +335,25 @@ if isPreMarket():
 if isPostMarket():
     print('GME POST: %f' % si.get_postmarket_price(kGME))
 
-if isPostMarket() or isRegularMarket():
-    # the_gme_list = si.get_quote_data(kGME)
-    # the_aapl_list = si.get_quote_data(kAAPL)
-    # the_tsla_list = si.get_quote_data(kTSLA)
-    # the_amc_list = si.get_quote_data(kAMC)
-    #
-    # # print(the_gme_list)
-    #
-    # myGME.tickerStat = the_gme_list
-    # myAAPL.tickerStat = the_aapl_list
-    # myTSLA.tickerStat = the_tsla_list
-    # myAMC.tickerStat = the_amc_list
-    #
-    # # get open info
-    # gme_open = the_gme_list['regularMarketOpen']
-    # aapl_open = the_aapl_list['regularMarketOpen']
-    # tsla_open = the_tsla_list['regularMarketOpen']
-    # amc_open = the_amc_list['regularMarketOpen']
-    #
-    # myGME.tickerOpen = gme_open
-    # myAAPL.tickerOpen = aapl_open
-    # myTSLA.tickerOpen = tsla_open
-    # myAMC.tickerOpen = amc_open
-    #
-    # # get stats for each stock
-    # gme_prev_close = the_gme_list['regularMarketPreviousClose']
-    # aapl_prev_close = the_aapl_list['regularMarketPreviousClose']
-    # tsla_prev_close = the_tsla_list['regularMarketPreviousClose']
-    # amc_prev_close = the_amc_list['regularMarketPreviousClose']
-    #
-    # myGME.tickerPrevClose = gme_prev_close
-    # myAAPL.tickerPrevClose = aapl_prev_close
-    # myTSLA.tickerPrevClose = tsla_prev_close
-    # myAMC.tickerPrevClose = amc_prev_close
-    #
-    # # list previous and open
-    # print('GME  previous close:  %8.2f' % gme_prev_close )
-    # print('AAPL previous close: %8.2f' % aapl_prev_close )
-    # print('TSLA previous close: %8.2f' % tsla_prev_close)
-    # print('AMC  previous close:  %8.2f' % amc_prev_close)
-    # print(' ')
-    # print('GME  open: %8.2f' % gme_open )
-    # print('AAPL open: %8.2f' % aapl_open )
-    # print('TSLA open: %8.2f' % tsla_open)
-    # print('AMC  open: %8.2f' % amc_open)
-    print(' ')
-
 
 while 1:
     UpdateMarketStatus()
     now = datetime.datetime.now()
-
-    # myGME.Update()
-    # myAAPL.Update()
-    # myTSLA.Update()
-    # myAMC.Update()
-
 
     # time.sleep(1)  # Sleep for 1 seconds
 
 
     for myTicker in gTickers:
         myTicker.Update()
-    print(now.strftime('%Y-%m-%d %H:%M:%S'))
+        
+    timeStr = now.strftime('%Y-%m-%d %H:%M:%S')
+    
+    print(f'{timeStr:<19} {headerStr}')
+
     for myTicker in gTickers:
         myTicker.PrintTicker()
 
-    # myGME.PrintTicker()
-    # myAAPL.PrintTicker()
-    # myTSLA.PrintTicker()
-    # myAMC.PrintTicker()
 
     print('-')
 
-    time.sleep(5)  # Sleep for 5 seconds
+    time.sleep(updateRate)  # Sleep for n seconds
