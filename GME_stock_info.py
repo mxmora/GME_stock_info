@@ -30,7 +30,6 @@ class KBHit:
 
         if os.name == 'nt':
             pass
-
         else:
 
             # Save the terminal settings
@@ -102,6 +101,11 @@ class KBHit:
 # =======================================================================================
 # Globals
 # =======================================================================================
+gTickers = []
+gTopMoversTickers = []
+# movers = []
+gTopMoversList = {}
+
 pre_pre_market = 0
 pre_market = 0
 post_market = 0
@@ -127,7 +131,7 @@ tickerList = {
     kAMC: 'AMC Corp'
 }
 
-headerStr = f"        Price           Open    % Chg          Lo    -    Hi                   Volume"
+gHeaderStr = f"        Price           Open    % Chg          Lo    -    Hi                   Volume"
 
 # term codes for setting text colors
 rst = '\033[0m'
@@ -141,19 +145,66 @@ invisible = '\033[08m'
 # Default update rate
 updateRate = kWaitTime
 
+# =======================================================================================
+# build a ticker dictionary from a list of symbols
+# =======================================================================================
+def BuildTickerDict(in_dict, in_list):
+
+    for theSymbol in in_list:
+        if gLogOutput:
+            print(theSymbol)
+        quoteData = si.get_quote_data(theSymbol)
+        if gLogOutput:
+            print(quoteData)
+        try:
+            tempStr = quoteData[kDisplayName]
+        except KeyError:
+            if gLogOutput:
+                print('no displayName')
+            tempStr = quoteData['shortName']
+
+        in_dict[theSymbol] = tempStr[0:20]
+
+    if gLogOutput:
+        print(in_dict)
+
+
+# =======================================================================================
+# Update Header String
+# =======================================================================================
+def UpdateHeaderString(afterMarket):
+    global gHeaderStr
+    
+    gHeaderStr =  "        Price"
+    gHeaderStr += "           Open    % Chg"
+    gHeaderStr += "          Lo    -    Hi"
+    if gShowFiftyTwo:
+        gHeaderStr += "          52 wk low - high"
+    if not afterMarket:
+        gHeaderStr += "                   Volume"
+    if afterMarket:
+        gHeaderStr += "         After Hours "
+                    
+
+# =======================================================================================
 # handle argument parsing
+# =======================================================================================
 parser = argparse.ArgumentParser(description='Show a list of stock tickers. It will show the current price is market is open, after hours price and volume. (default is GME, APPL, TSLA and AMC)')
 parser.add_argument('--verbose', help='Enable verbose output. Mostly for debugging', action='store_true')
 parser.add_argument('--alert', help='Ring the bell on new lows and new highs', action='store_true')
 parser.add_argument('--top', type=int, default=0, help='Show top moving stocks, provide a number less than 100')
 parser.add_argument('--rate', type=int, help='How many seconds to pause between updates.', )
+parser.add_argument('--fiftytwo', help='Show the 52 week high low', action='store_true')
 parser.add_argument('tickers', metavar='symbols', type=str, nargs='*', help='A one or more stock symbols that you want to display.')
 
 args = parser.parse_args()
-logOutput = args.verbose
-showTopMovers = args.top
+gLogOutput = args.verbose
+gShowTopMovers = args.top
+gShowFiftyTwo = args.fiftytwo
 gBell = args.alert
 
+
+# gLogOutput = True
 
 theTickers = {}
 # Adjust the rate of update
@@ -166,36 +217,14 @@ if args.rate:
     print(f"Update rate set to {updateRate} second(s)")
 
 
-# build a ticker dictionary from a list of symbols
-def BuildTickerDict(in_dict, in_list):
-
-    for theSymbol in in_list:
-        if logOutput:
-            print(theSymbol)
-        quoteData = si.get_quote_data(theSymbol)
-        if logOutput:
-            print(quoteData)
-        try:
-            tempStr = quoteData[kDisplayName]
-        except KeyError:
-            if logOutput:
-                print('no displayName')
-            tempStr = quoteData['shortName']
-
-        in_dict[theSymbol] = tempStr[0:20]
-
-    if logOutput:
-        print(in_dict)
-
-
 if args.tickers:
     newTickerList = args.tickers
     BuildTickerDict(theTickers, newTickerList)
-    if logOutput:
+    if gLogOutput:
         print(theTickers)
 else:
     theTickers = tickerList
-    if logOutput:
+    if gLogOutput:
         print(f'No list supplied. using default : {theTickers}')
 
 
@@ -251,6 +280,10 @@ class Ticker:
         self.lastRegularMarketDayHigh = 0
         self.timeToPrint = 0
         self.marketVolume = 0
+        self.fiftyTwoWeekLow = 0 
+        self.fiftyTwoWeekHigh = 0
+        self.lastFiftyTwoWeekHigh = 0
+        self.lastFiftyTwoWeekLow = 0
 
     def __repr__(self):
         return "Ticker('{}', {})".format(self.tickerName, self.tickerSymbol)
@@ -259,6 +292,7 @@ class Ticker:
         return f"{self.tickerName}: '{self.tickerSymbol}' ${self.currentVal} open:{self.tickerOpen} lastVal:{self.lastVal} prevClose:{self.tickerPrevClose} [{self.quoteData}]"
 
     def PrintTicker(self):
+
         if self.regularMarketDayHigh > self.lastRegularMarketDayHigh:
             newHighStr = f'new market day high: {self.regularMarketDayHigh:9.2f}'
             if gBell:
@@ -269,6 +303,22 @@ class Ticker:
         if self.regularMarketDayLow < self.lastRegularMarketDayLow:
             newLowStr = f'new market day low: {self.regularMarketDayLow:9.2f}'
             if gBell:
+                newLowStr += '\u0007'
+        else:
+            newLowStr = ''
+        # Check to see if we hit a new 52 week low or high
+        if self.fiftyTwoWeekHigh > self.lastFiftyTwoWeekHigh:
+            newHighStr = f'new 52 week high: {self.fiftyTwoWeekHigh:9.2f}'
+            if gBell:
+                newHighStr += '\u0007'
+                newHighStr += '\u0007'
+        else:
+            newHighStr = ''
+
+        if self.fiftyTwoWeekLow < self.lastFiftyTwoWeekLow:
+            newLowStr = f'new 52 week low: {self.fiftyTwoWeekLow:9.2f}'
+            if gBell:
+                newLowStr += '\u0007'
                 newLowStr += '\u0007'
         else:
             newLowStr = ''
@@ -316,16 +366,20 @@ class Ticker:
         outputStr += f" [{txtColor2}{self.tickerPrevClose:9.2f} {self.percentChange:5.1f}% {prevCloseDirection} {rst}]"
 
         if self.aftermarket:
+            if gShowFiftyTwo:
+                outputStr += f" [ {self.fiftyTwoWeekLow:9.2f} - {self.fiftyTwoWeekHigh:9.2f} ] {rst}"
             outputStr += f" {self.aftermarketPrice:9.2f} {self.percentChangeSinceClose:5.1f}%"
         else:
             outputStr += f" [ {self.regularMarketDayLow:9.2f} - {self.regularMarketDayHigh:9.2f} ] {rst}"
+            if gShowFiftyTwo:
+                outputStr += f" [ {self.fiftyTwoWeekLow:9.2f} - {self.fiftyTwoWeekHigh:9.2f} ] {rst}"
             outputStr += f" {self.marketVolume:>18,d} "
             outputStr += f" {newMarketColor}{newMarketStr}{newMarketDir} {rst}"
 
         print(outputStr)
 
     def Update(self):
-        global headerStr
+        global gHeaderStr
         self.updateTime = datetime.datetime.now()
         self.lastVal = self.currentVal
         # self.currentVal = si.get_live_price(self.tickerSymbol)
@@ -333,9 +387,16 @@ class Ticker:
             self.quoteData = si.get_quote_data(self.tickerSymbol)
             self.lastRegularMarketDayLow = self.regularMarketDayLow
             self.lastRegularMarketDayHigh = self.regularMarketDayHigh
+            self.lastFiftyTwoWeekLow = self.fiftyTwoWeekLow
+            self.lastFiftyTwoWeekHigh = self.fiftyTwoWeekHigh
             self.currentVal = self.quoteData['regularMarketPrice']
             self.marketVolume = self.quoteData['regularMarketVolume']
-
+            self.fiftyTwoWeekHigh = self.quoteData['fiftyTwoWeekHigh']
+            self.fiftyTwoWeekLow = self.quoteData['fiftyTwoWeekLow']
+            if self.lastFiftyTwoWeekLow == 0:
+                self.lastFiftyTwoWeekLow = self.fiftyTwoWeekLow
+            if self.lastFiftyTwoWeekHigh == 0:
+                self.lastFiftyTwoWeekHigh = self.fiftyTwoWeekHigh
             if self.tickerOpen == 0:
                 self.tickerOpen = self.quoteData['regularMarketOpen']
 
@@ -349,6 +410,8 @@ class Ticker:
 
             self.regularMarketDayHigh = max(self.quoteData['regularMarketDayHigh'], self.regularMarketDayHigh)
 
+            UpdateHeaderString(isPostMarket())
+            
             if isPostMarket():
                 self.aftermarket = 1
                 if self.quoteData['quoteType'] == 'CRYPTOCURRENCY':
@@ -357,15 +420,27 @@ class Ticker:
                     self.aftermarketPrice = si.get_postmarket_price(self.tickerSymbol)
                 self.previousClose = self.currentVal
                 self.percentChangeSinceClose = 0 if self.previousClose == 0 else ((self.aftermarketPrice - self.previousClose) / self.previousClose) * 100
-                headerStr = f"   Price           Open   % Chg          After Hours "
+                
+
         except KeyboardInterrupt:
             pass
+        except OSError as e:
+            if e.errno == 50:
+                exit()
+        except ConnectionError:
+            pass
+        except AssertionError:
+            print("assertion error. Likely data not available")
+            pass
+
         self.lastPercentChange = self.percentChange
         self.percentChange = 0 if self.tickerPrevClose == 0 else ((self.currentVal - self.tickerPrevClose) / self.tickerPrevClose) * 100
         self.percentChangeSinceOpen = 0 if self.tickerOpen == 0 else ((self.currentVal - self.tickerOpen) / self.tickerOpen) * 100
 
 
-# ------------------------------------------
+# =======================================================================================
+# Utility functions
+# =======================================================================================
 def isPreMarket():
     return pre_market
 
@@ -397,7 +472,7 @@ def UpdateMarketStatus():
         market_status = si.get_market_status()
     except KeyboardInterrupt:
         pass
-    if logOutput:
+    if gLogOutput:
         print(f"Market Status: {market_status}")
 
     pre_pre_market = 0
@@ -419,7 +494,9 @@ def UpdateMarketStatus():
         # print('market closed')
 
 
-# ------------------------------------------
+# =======================================================================================
+# Show Top Movers
+# =======================================================================================
 def ShowTopMovers(topNum, tempTickers):
     df = si.get_day_most_active()
     movers = df.loc[1:topNum, "Symbol"]
@@ -433,7 +510,7 @@ def ShowTopMovers(topNum, tempTickers):
         try:
             tempStr = quoteData[kDisplayName]
         except KeyError:
-            if logOutput:
+            if gLogOutput:
                 print('no displayName')
 
             tempStr = quoteData['shortName']
@@ -442,7 +519,9 @@ def ShowTopMovers(topNum, tempTickers):
     print('-\n')
 
 
-# ------------------------------------------
+# =======================================================================================
+# Add a symbols(s) to the current display
+# =======================================================================================
 def addSymbol():
     print(f'enter symbols to add (space separated):')
     newSymbols = input()
@@ -459,39 +538,43 @@ def addSymbol():
         print("skipping. no symbols entered\n")
 
 
-# ------------------------------------------
+# =======================================================================================
+# handle argument parsing
+# =======================================================================================
 def displayHelp():
     print("\n Help Menu")
     print(" ---------")
     print("Type a 'q' or ESC to exit.")
     print("Type an 'a' to add new symbols to track.")
     print("Type an 'h' to display help.")
+    print("Type an 'f' to toggle 52 week range display")
     print(" ")
     
-# ------------------------------------------
+
+# =======================================================================================
 # main code
-# ------------------------------------------
+# =======================================================================================
 
 print("Enter q or esc to quit. h for help\n")    
 
 # See if the market is open, pre or post. Quit if closed
 UpdateMarketStatus()
 
-gTopMoversTickers = []
-movers = []
-gTopMoversList = {}
-if showTopMovers:
+# Top mover list building
+
+if gShowTopMovers:
     ShowTopMovers(showTopMovers, gTopMoversList)
     for ticker, name in gTopMoversList.items():
         gTopMoversTickers.append(Ticker(name, ticker))
 
-gTickers = []
 
+# build up main listing
 for ticker, tickerName in theTickers.items():
     gTickers.append(Ticker(tickerName, ticker))
 
 kb = KBHit()
-    
+
+# main while loop
 while 1:
     UpdateMarketStatus()
 
@@ -508,14 +591,14 @@ while 1:
 
     timeStr = now.strftime('%Y-%m-%d %H:%M:%S')
 
-    print(f'{timeStr:<19} {headerStr}')
+    print(f'{timeStr:<19} {gHeaderStr}')
 
     for myTicker in gTickers:
         myTicker.PrintTicker()
 
     if gTopMoversTickers:
         print('-')
-        print(f" Top {showTopMovers} Movers")
+        print(f" Top {gShowTopMovers} Movers")
         print('-')
         for myTicker in gTopMoversTickers:
             myTicker.PrintTicker()
@@ -526,11 +609,11 @@ while 1:
 
     print('-')
     
-    count = updateRate * 10
+    count = updateRate * 100
     while count:
         if kb.kbhit():
             c = kb.getch()
-            if ord(c) == 27 or c == 'q': # ESC
+            if ord(c) == 27 or c == 'q':  # ESC
                 print('done')
                 exit()
             if c == 'a':
@@ -538,10 +621,18 @@ while 1:
                 addSymbol()
                 kb = KBHit()
                 break
+            if c == 'f':
+                gShowFiftyTwo = not gShowFiftyTwo
+                tempStr = f"Setting 52 week option "
+                tempStr += "on" if gShowFiftyTwo else "off"
+                print(tempStr) 
+                count = 1
+                break
             if c == 'h':
                 displayHelp()
+                count = 1
                 break
         count -= 1
-        time.sleep(.1)  # Sleep for 100ms seconds
+        time.sleep(.01)  # Sleep for 10ms seconds
 
 kb.set_normal_term()
