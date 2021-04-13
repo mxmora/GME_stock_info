@@ -292,36 +292,31 @@ class Ticker:
         return f"{self.tickerName}: '{self.tickerSymbol}' ${self.currentVal} open:{self.tickerOpen} lastVal:{self.lastVal} prevClose:{self.tickerPrevClose} [{self.quoteData}]"
 
     def PrintTicker(self):
+        newLowStr = ''
+        newHighStr = ''
 
         if self.regularMarketDayHigh > self.lastRegularMarketDayHigh:
             newHighStr = f'new market day high: {self.regularMarketDayHigh:9.2f}'
             if gBell:
                 newHighStr += '\u0007'
-        else:
-            newHighStr = ''
 
         if self.regularMarketDayLow < self.lastRegularMarketDayLow:
             newLowStr = f'new market day low: {self.regularMarketDayLow:9.2f}'
             if gBell:
                 newLowStr += '\u0007'
-        else:
-            newLowStr = ''
+
         # Check to see if we hit a new 52 week low or high
         if self.fiftyTwoWeekHigh > self.lastFiftyTwoWeekHigh:
             newHighStr = f'new 52 week high: {self.fiftyTwoWeekHigh:9.2f}'
             if gBell:
                 newHighStr += '\u0007'
                 newHighStr += '\u0007'
-        else:
-            newHighStr = ''
 
         if self.fiftyTwoWeekLow < self.lastFiftyTwoWeekLow:
             newLowStr = f'new 52 week low: {self.fiftyTwoWeekLow:9.2f}'
             if gBell:
                 newLowStr += '\u0007'
                 newLowStr += '\u0007'
-        else:
-            newLowStr = ''
 
         newMarketStr = ''
         newMarketDir = ''
@@ -393,6 +388,7 @@ class Ticker:
             self.marketVolume = self.quoteData['regularMarketVolume']
             self.fiftyTwoWeekHigh = self.quoteData['fiftyTwoWeekHigh']
             self.fiftyTwoWeekLow = self.quoteData['fiftyTwoWeekLow']
+
             if self.lastFiftyTwoWeekLow == 0:
                 self.lastFiftyTwoWeekLow = self.fiftyTwoWeekLow
             if self.lastFiftyTwoWeekHigh == 0:
