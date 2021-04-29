@@ -12,9 +12,6 @@ import smtplib, ssl
 import queue as que
 import threading
 
-
-
-
 # Windows
 if os.name == 'nt':
     import msvcrt
@@ -160,28 +157,36 @@ invisible = '\033[08m'
 # Default update rate
 updateRate = kWaitTime
 
+
+# =======================================================================================
+# debugLog
+# =======================================================================================
+def debugLog(dbg_msg):
+    print(dbg_msg) if gLogOutput else None
+
+
 # =======================================================================================
 # build a ticker dictionary from a list of symbols
 # =======================================================================================
 def BuildTickerDict(in_dict, in_list):
 
     for theSymbol in in_list:
-        if gLogOutput:
-            print(theSymbol)
+       
+        debugLog(theSymbol)
         quoteData = si.get_quote_data(theSymbol)
-        if gLogOutput:
-            print(quoteData)
+
+        debugLog(quoteData)
         try:
             tempStr = quoteData[kDisplayName]
         except KeyError:
-            if gLogOutput:
-                print('no displayName')
+           
+            debugLog('no displayName')
             tempStr = quoteData['shortName']
 
         in_dict[theSymbol] = tempStr[0:20]
 
-    if gLogOutput:
-        print(in_dict)
+    
+    debugLog(in_dict)
 
 
 # =======================================================================================
@@ -215,6 +220,7 @@ parser.add_argument('--top', type=int, default=0, help='Show top moving stocks, 
 parser.add_argument('--rate', type=int, help='How many seconds to pause between updates.', )
 parser.add_argument('--fiftytwo', help='Show the 52 week high low', action='store_true')
 parser.add_argument('--curses', help='Show the list using curses.', action='store_true')
+parser.add_argument('--email', help='If alerts are on, send an email too', action='store_true')
 parser.add_argument('tickers', metavar='symbols', type=str, nargs='*', help='A one or more stock symbols that you want to display.')
 
 args = parser.parse_args()
@@ -223,6 +229,8 @@ gShowTopMovers = args.top
 gShowFiftyTwo = args.fiftytwo
 gBell = args.alert
 gUseCurses = args.curses
+gSendEmail = args.email
+
 
 # gLogOutput = True
 
@@ -240,12 +248,11 @@ if args.rate:
 if args.tickers:
     newTickerList = args.tickers
     BuildTickerDict(theTickers, newTickerList)
-    if gLogOutput:
-        print(theTickers)
+    debugLog(theTickers)
 else:
     theTickers = tickerList
-    if gLogOutput:
-        print(f'No list supplied. using default : {theTickers}')
+
+    debugLog(f'No list supplied. using default : {theTickers}')
         
 class HeaderRec:
     def __init__(self, in_name, in_width):
@@ -290,11 +297,8 @@ class bg:
 
 class Ticker:
     def __init__(self, name, sym):
-        self.updateTime = 0
-        self.currentVal = 0
-        self.lastVal = 0
-        self.tickerOpen = 0
-        self.tickerPrevClose = 0
+        self.updateTime = datetime.datetime.now()
+
         self.tickerSymbol = sym.upper()
         self.tickerName = name
         self.percentChangeSinceOpen = 0
@@ -302,19 +306,26 @@ class Ticker:
         self.percentChange = 0
         self.aftermarketPrice = 0
         self.aftermarket = 0
-        self.quoteData = 0
-        self.regularMarketDayHigh = 0
-        self.regularMarketDayLow = 0
         self.previousClose = 0
         self.lastPercentChange = 0
-        self.lastRegularMarketDayLow = 0
-        self.lastRegularMarketDayHigh = 0
         self.timeToPrint = 0
-        self.marketVolume = 0
-        self.fiftyTwoWeekLow = 0 
-        self.fiftyTwoWeekHigh = 0
-        self.lastFiftyTwoWeekHigh = 0
-        self.lastFiftyTwoWeekLow = 0
+        
+        self.GetQuoteData()
+        self.currentVal = self.quoteData['regularMarketPrice']
+        
+        self.lastRegularMarketDayLow = self.quoteData['regularMarketDayLow']
+        self.lastRegularMarketDayHigh = self.quoteData['regularMarketDayHigh']
+        self.regularMarketDayLow = self.lastRegularMarketDayLow
+        self.regularMarketDayHigh =  self.lastRegularMarketDayHigh
+        self.lastFiftyTwoWeekLow = self.quoteData['fiftyTwoWeekLow']
+        self.lastFiftyTwoWeekHigh = self.quoteData['fiftyTwoWeekHigh']
+        self.marketVolume = self.quoteData['regularMarketVolume']
+        self.fiftyTwoWeekHigh = self.lastFiftyTwoWeekHigh 
+        self.fiftyTwoWeekLow = self.lastFiftyTwoWeekLow
+        self.tickerOpen = self.quoteData['regularMarketOpen']
+        self.tickerPrevClose = self.quoteData['regularMarketPreviousClose']
+        self.lastVal = self.currentVal
+
 
     def __repr__(self):
         return "Ticker('{}', {})".format(self.tickerName, self.tickerSymbol)
@@ -342,13 +353,13 @@ class Ticker:
 
         if gShowFiftyTwo:
             # Check to see if we hit a new 52 week low or high
-            if self.fiftyTwoWeekHigh > self.lastFiftyTwoWeekHigh:
+            if self.currentVal > self.lastFiftyTwoWeekHigh:
                 newHighStr = f'new 52 week high: {self.fiftyTwoWeekHigh:9.2f}'
                 if gBell:
                     newHighStr += '\u0007'
                     newHighStr += '\u0007'
 
-            if self.fiftyTwoWeekLow < self.lastFiftyTwoWeekLow:
+            if self.currentVal < self.lastFiftyTwoWeekLow:
                 newLowStr = f'new 52 week low: {self.fiftyTwoWeekLow:9.2f}'
                 if gBell:
                     newLowStr += '\u0007'
@@ -383,7 +394,6 @@ class Ticker:
             invertText = True
             invertBkgndColor = bg.green
             invertFgColor = fg.blue
-
 
         if self.lastVal == self.currentVal:
             tickerDirection = ' '
@@ -439,55 +449,14 @@ class Ticker:
 
             outputStr += f"Volume:  {self.marketVolume:>18,d}.00\n"
             # outputStr += f"Status: {newMarketStr}\n"
+            curValStr = f"{self.currentVal:9.2f}"
 
-            tempMsg = buildEmailMessage(tempSymbol, self.tickerName, newMarketStr, f"{tempSymbol}: {self.tickerName} {newMarketStr} \n\n {outputStr} \n")
+            tempMsg = buildEmailMessage(tempSymbol, curValStr, self.tickerName,  newMarketStr, f"{tempSymbol}: {self.tickerName} {newMarketStr} \n\n {outputStr} \n")
             # print(outputStr)
             queueEmail(tempMsg)
-
-    def Update(self):
-        global gHeaderStr
-        self.updateTime = datetime.datetime.now()
-        self.lastVal = self.currentVal
-        # self.currentVal = si.get_live_price(self.tickerSymbol)
+    def GetQuoteData(self):
         try:
             self.quoteData = si.get_quote_data(self.tickerSymbol)
-            self.lastRegularMarketDayLow = self.regularMarketDayLow
-            self.lastRegularMarketDayHigh = self.regularMarketDayHigh
-            self.lastFiftyTwoWeekLow = min(self.fiftyTwoWeekLow, self.lastFiftyTwoWeekLow)
-            self.lastFiftyTwoWeekHigh = max(self.fiftyTwoWeekHigh,self.lastFiftyTwoWeekHigh)
-            self.currentVal = self.quoteData['regularMarketPrice']
-            self.marketVolume = self.quoteData['regularMarketVolume']
-            self.fiftyTwoWeekHigh = self.quoteData['fiftyTwoWeekHigh']
-            self.fiftyTwoWeekLow = self.quoteData['fiftyTwoWeekLow']
-
-            if self.lastFiftyTwoWeekLow == 0:
-                self.lastFiftyTwoWeekLow = self.fiftyTwoWeekLow
-            if self.lastFiftyTwoWeekHigh == 0:
-                self.lastFiftyTwoWeekHigh = self.fiftyTwoWeekHigh
-
-            if self.tickerOpen == 0:
-                self.tickerOpen = self.quoteData['regularMarketOpen']
-
-            if self.tickerPrevClose == 0:
-                self.tickerPrevClose = self.quoteData['regularMarketPreviousClose']
-
-            if self.regularMarketDayLow == 0:
-                self.regularMarketDayLow = self.quoteData['regularMarketDayLow']
-            else:
-                self.regularMarketDayLow = min(self.quoteData['regularMarketDayLow'], self.regularMarketDayLow)
-
-            self.regularMarketDayHigh = max(self.quoteData['regularMarketDayHigh'], self.regularMarketDayHigh)
-
-            UpdateHeaderString(isPostMarket())
-            
-            if isPostMarket():
-                self.aftermarket = 1
-                if self.quoteData['quoteType'] == 'CRYPTOCURRENCY':
-                    self.aftermarketPrice = self.quoteData['regularMarketPrice']
-                else:
-                    self.aftermarketPrice = si.get_postmarket_price(self.tickerSymbol)
-                self.previousClose = self.currentVal
-                self.percentChangeSinceClose = 0 if self.previousClose == 0 else ((self.aftermarketPrice - self.previousClose) / self.previousClose) * 100
 
         except KeyboardInterrupt:
             pass
@@ -505,6 +474,38 @@ class Ticker:
             else:
                 print("something is up... hold on...")
             pass
+            
+    def Update(self):
+        global gHeaderStr
+        self.updateTime = datetime.datetime.now()
+        self.lastVal = self.currentVal
+        self.lastRegularMarketDayLow = min(self.regularMarketDayLow, self.lastRegularMarketDayLow)
+        self.lastRegularMarketDayHigh = max(self.regularMarketDayHigh, self.lastRegularMarketDayHigh)
+        self.lastFiftyTwoWeekLow = min(self.fiftyTwoWeekLow, self.lastFiftyTwoWeekLow)
+        self.lastFiftyTwoWeekHigh = max(self.fiftyTwoWeekHigh,self.lastFiftyTwoWeekHigh)
+                
+        # self.currentVal = si.get_live_price(self.tickerSymbol)
+        self.GetQuoteData()
+ 
+        self.regularMarketDayLow = min(self.quoteData['regularMarketDayLow'], self.regularMarketDayLow)
+        self.regularMarketDayHigh = max(self.quoteData['regularMarketDayHigh'], self.regularMarketDayHigh)
+        self.currentVal = self.quoteData['regularMarketPrice']
+        self.marketVolume = self.quoteData['regularMarketVolume']
+        self.fiftyTwoWeekHigh = self.quoteData['fiftyTwoWeekHigh']
+        self.fiftyTwoWeekLow = self.quoteData['fiftyTwoWeekLow']
+        self.tickerOpen = self.quoteData['regularMarketOpen']
+        self.tickerPrevClose = self.quoteData['regularMarketPreviousClose']
+
+        UpdateHeaderString(isPostMarket())
+        
+        if isPostMarket():
+            self.aftermarket = 1
+            if self.quoteData['quoteType'] == 'CRYPTOCURRENCY':
+                self.aftermarketPrice = self.quoteData['regularMarketPrice']
+            else:
+                self.aftermarketPrice = si.get_postmarket_price(self.tickerSymbol)
+            self.previousClose = self.currentVal
+            self.percentChangeSinceClose = 0 if self.previousClose == 0 else ((self.aftermarketPrice - self.previousClose) / self.previousClose) * 100
 
         self.lastPercentChange = self.percentChange
         self.percentChange = 0 if self.tickerPrevClose == 0 else ((self.currentVal - self.tickerPrevClose) / self.tickerPrevClose) * 100
@@ -545,8 +546,8 @@ def UpdateMarketStatus():
         market_status = si.get_market_status()
     except KeyboardInterrupt:
         pass
-    if gLogOutput:
-        print(f"Market Status: {market_status}")
+
+    debugLog(f"Market Status: {market_status}")
 
     pre_pre_market = 0
     pre_market = 0
@@ -583,8 +584,7 @@ def ShowTopMovers(topNum, tempTickers):
         try:
             tempStr = quoteData[kDisplayName]
         except KeyError:
-            if gLogOutput:
-                print('no displayName')
+            debugLog('no displayName')
 
             tempStr = quoteData['shortName']
         tempTickers[symName] = tempStr[0:22]
@@ -624,6 +624,9 @@ def displayHelp():
     print(" ")
     
 
+# =======================================================================================
+# buildEmailMessage
+# =======================================================================================
 def cursesMain(stdscr):
     stdscr = curses.initscr()
 
@@ -636,8 +639,8 @@ def cursesMain(stdscr):
 # =======================================================================================
 # buildEmailMessage
 # =======================================================================================
-def buildEmailMessage(inTicker,inName,inSubject,inBody):
-    outMessage =f"Subject:{inTicker}: {inName} {inSubject} \n\n {inBody}"
+def buildEmailMessage(inTicker, inValue, inName, inSubject,  inBody):
+    outMessage = f"Subject:{inTicker}: {inValue} {inName} {inSubject} \n\n {inBody}"
     return outMessage
 
 
@@ -673,14 +676,17 @@ def thread_function(name):
 
     while True:
         temp_msg = gEmailQueue.get()
-        print(f"got message {temp_msg}")
+        debugLog(f"got message {temp_msg}")
+        if temp_msg == "STOP":
+            print("Stopping Email processor")
+            break
         sendEmail(temp_msg)
-        print("msg sent")
+        debugLog("msg sent")
 
-        time.sleep(5)
-        print("check for email")
+        time.sleep(.5)
+        debugLog("check for email")
 
-    print("Thread ending")
+    print("Email processor stopped")
 
 
 # =======================================================================================
@@ -696,8 +702,11 @@ def main():
     global gShowFiftyTwo
     global gShowSorted
     global gMailThread
+    global gSendEmail
 
-    gMailThread = threading.Thread(target=thread_function, args=(1,))
+    if gSendEmail:
+        gMailThread = threading.Thread(target=thread_function, args=(1,))
+        gMailThread.start()
 
     gColumns.append(HeaderRec(" ",2))
     gColumns.append(HeaderRec("Ticker",10))
@@ -725,19 +734,12 @@ def main():
     # build up main listing
     for ticker, tickerName in theTickers.items():
         gTickers.append(Ticker(tickerName, ticker))
-        #tempMsg = buildEmailMessage(ticker.upper(),tickerName,"New All Time High",f"{ticker.upper()}: {tickerName} Has hit a new all time high\n")
-        #sendEmail(tempMsg)
-        #queueEmail(tempMsg)
-
-    gMailThread.start()
 
     kb = KBHit()
 
     # main while loop
     while 1:
         UpdateMarketStatus()
-
-
         now = datetime.datetime.now()
 
         # update the list of symbols
@@ -774,6 +776,10 @@ def main():
             if kb.kbhit():
                 c = kb.getch()
                 if ord(c) == 27 or c == 'q':  # ESC
+                    print('stopping...')
+                    if gSendEmail:
+                        queueEmail("STOP")
+                        time.sleep(1)
                     print('done')
                     exit()
                 if c == 'a':
