@@ -8,7 +8,8 @@ import argparse
 import sys
 import os
 # import curses
-import smtplib, ssl
+import smtplib
+import ssl
 import queue as que
 import threading
 
@@ -98,19 +99,38 @@ class KBHit:
             return msvcrt.kbhit()
 
         else:
-            dr,dw,de = select([sys.stdin], [], [], 0)
+            dr, dw, de = select([sys.stdin], [], [], 0)
             return dr != []
 
 
 # =======================================================================================
 # Globals
 # =======================================================================================
-gEmailQueue = que.Queue(maxsize = 100)
-gMailThread = None
+kMARKET = "MARKET"
+kUPDATE = "UPDATE"
+kSTOP = "STOP"
+kPAUSE = "PAUSE"
 
-gShowFiftyTwo = 0
+kSortOrderTickerAsc = '1'
+kSortOrderTickerDsc = '2'
+kSortOrderPercentAsc = '3'
+kSortOrderPercentDsc = '4'
+kSortOrderVolumeAsc = '5'
+kSortOrderVolumeDsc = '6'
+kSortOrderIndexAsc = '7'
+kSortOrderIndexDsc = '8'
+valid_sort_options = {'1', '2', '3', '4', '5', '6', '7', '8'}
+
+gCurrentSortOrder = None
+gEmailQueue = que.Queue(maxsize=100)
+gMailThread = None
+gUseThreading = False
+gTickerThread = None
+gTickerQueue = que.Queue(maxsize=10)
+
+#gShowFiftyTwo = 0
 gShowSorted = True
-gSendEmail = False
+#gSendEmail = False
 
 gColumns = []
 gTickers = []
@@ -194,20 +214,38 @@ def BuildTickerDict(in_dict, in_list):
 # =======================================================================================
 def UpdateHeaderString(afterMarket):
     global gHeaderStr
-    
-    gHeaderStr = " Ticker   " # symbol
+    global gCurrentSortOrder
+
+    tickerSortOrder = " "
+    percentSortOrder = " "
+    volumeSortOrder = " "
+
+    if gCurrentSortOrder == kSortOrderTickerAsc:
+        tickerSortOrder = upArrow
+    if gCurrentSortOrder == kSortOrderVolumeAsc:
+        volumeSortOrder = upArrow
+    if gCurrentSortOrder == kSortOrderPercentAsc:
+        percentSortOrder = upArrow
+    if gCurrentSortOrder == kSortOrderTickerDsc:
+        tickerSortOrder = downArrow
+    if gCurrentSortOrder == kSortOrderVolumeDsc:
+        volumeSortOrder = downArrow
+    if gCurrentSortOrder == kSortOrderPercentDsc:
+        percentSortOrder = downArrow
+
+    gHeaderStr = f" Ticker {tickerSortOrder} "  # symbol
     gHeaderStr += "Name                      "
-    gHeaderStr += "Price         "
-    gHeaderStr += "Open    "
-    gHeaderStr += "% Chg   "
+    gHeaderStr += f"Price      "
+    gHeaderStr += "[    Open  "
+    gHeaderStr += f"% Chg {percentSortOrder}  ] "
     if not afterMarket:
-        gHeaderStr += "         Lo    -    Hi"
+        gHeaderStr += "[       Lo    -    Hi   ] "
     if gShowFiftyTwo:
-        gHeaderStr += "          52 wk low - high"
+        gHeaderStr += "[    52 wk Lo  -    Hi      % Chg  ] "
     if not afterMarket:
-        gHeaderStr += "                   Volume"
+        gHeaderStr += f"            Volume {volumeSortOrder}"
     if afterMarket:
-        gHeaderStr += "         After Hours "
+        gHeaderStr += "[  After Hours    % Chg ]"
                     
 
 # =======================================================================================
@@ -217,10 +255,12 @@ parser = argparse.ArgumentParser(description='Show a list of stock tickers. It w
 parser.add_argument('--verbose', help='Enable verbose output. Mostly for debugging', action='store_true')
 parser.add_argument('--alert', help='Ring the bell on new lows and new highs', action='store_true')
 parser.add_argument('--top', type=int, default=0, help='Show top moving stocks, provide a number less than 100')
+parser.add_argument('--file', type=str, default='', help='a file containing a list of tickers')
 parser.add_argument('--rate', type=int, help='How many seconds to pause between updates.', )
 parser.add_argument('--fiftytwo', help='Show the 52 week high low', action='store_true')
 parser.add_argument('--curses', help='Show the list using curses.', action='store_true')
-parser.add_argument('--email', help='If alerts are on, send an email too', action='store_true')
+parser.add_argument('--email', help='If alerts are on, send an email also', action='store_true')
+parser.add_argument('--thread', help='use threading for updates', action='store_true')
 parser.add_argument('tickers', metavar='symbols', type=str, nargs='*', help='A one or more stock symbols that you want to display.')
 
 args = parser.parse_args()
@@ -230,7 +270,7 @@ gShowFiftyTwo = args.fiftytwo
 gBell = args.alert
 gUseCurses = args.curses
 gSendEmail = args.email
-
+gUseThreading = args.thread
 
 # gLogOutput = True
 
@@ -298,19 +338,20 @@ class bg:
 class Ticker:
     def __init__(self, name, sym):
         self.updateTime = datetime.datetime.now()
-
+        self.index = 0
         self.tickerSymbol = sym.upper()
         self.tickerName = name
         self.percentChangeSinceOpen = 0
         self.percentChangeSinceClose = 0
         self.percentChange = 0
+        self.FiftyTwoPercentChange = 0
         self.aftermarketPrice = 0
         self.aftermarket = 0
         self.previousClose = 0
         self.lastPercentChange = 0
         self.timeToPrint = 0
         
-        self.GetQuoteData()
+        self.quoteData = GetQuoteData(self.tickerSymbol)
         self.currentVal = self.quoteData['regularMarketPrice']
         
         self.lastRegularMarketDayLow = self.quoteData['regularMarketDayLow']
@@ -332,6 +373,24 @@ class Ticker:
 
     def __str__(self):
         return f"{self.tickerName}: '{self.tickerSymbol}' ${self.currentVal} open:{self.tickerOpen} lastVal:{self.lastVal} prevClose:{self.tickerPrevClose} [{self.quoteData}]"
+
+    def GetIndex(self):
+        return self.index
+
+    def SetIndex(self, in_index):
+        self.index = in_index
+
+    def GetTicker(self):
+        return self.tickerSymbol
+
+    def GetPercentChanged(self):
+        return self.percentChange
+
+    def GetVolume(self):
+        return self.marketVolume
+
+    def GetFiftyTwoOutputStr(self):
+        return f" [ {self.fiftyTwoWeekLow:9.2f} - {self.fiftyTwoWeekHigh:9.2f} {self.FiftyTwoPercentChange:9.2f}% ]{rst}"
 
     def PrintTicker(self):
         newLowStr = ''
@@ -371,10 +430,9 @@ class Ticker:
         warningStr = ' '
         warningColor = rst
         invertText = False
-        invertBkgndColor = bg.black;
-        invertBkgndColor = fg.lightgreen;
+        invertBkgndColor = bg.black
+        invertFgColor = fg.lightgreen
 
-        
         if newLowStr != '':
             newMarketDir = downArrow
             newMarketStr = newLowStr
@@ -424,12 +482,12 @@ class Ticker:
 
         if self.aftermarket:
             if gShowFiftyTwo:
-                outputStr += f" [ {self.fiftyTwoWeekLow:9.2f} - {self.fiftyTwoWeekHigh:9.2f} ] {rst}"
-            outputStr += f" {self.aftermarketPrice:9.2f} {self.percentChangeSinceClose:5.1f}%"
+                outputStr += self.GetFiftyTwoOutputStr()
+            outputStr += f" [{self.aftermarketPrice:11.2f}    {self.percentChangeSinceClose:6.1f}% ]"
         else:
-            outputStr += f" [ {self.regularMarketDayLow:9.2f} - {self.regularMarketDayHigh:9.2f} ] {rst}"
+            outputStr += f" [ {self.regularMarketDayLow:9.2f} - {self.regularMarketDayHigh:9.2f} ]{rst}"
             if gShowFiftyTwo:
-                outputStr += f" [ {self.fiftyTwoWeekLow:9.2f} - {self.fiftyTwoWeekHigh:9.2f} ] {rst}"
+                outputStr += self.GetFiftyTwoOutputStr()
             outputStr += f" {self.marketVolume:>18,d} "
             outputStr += f" {newMarketColor}{newMarketStr}{newMarketDir} {rst}"
 
@@ -449,32 +507,12 @@ class Ticker:
 
             outputStr += f"Volume:  {self.marketVolume:>18,d}.00\n"
             # outputStr += f"Status: {newMarketStr}\n"
-            curValStr = f"{self.currentVal:9.2f}"
+            curValStr = f"$ {self.currentVal:.2f} {self.percentChange:5.1f}%"
 
             tempMsg = buildEmailMessage(tempSymbol, curValStr, self.tickerName,  newMarketStr, f"{tempSymbol}: {self.tickerName} {newMarketStr} \n\n {outputStr} \n")
             # print(outputStr)
             queueEmail(tempMsg)
-    def GetQuoteData(self):
-        try:
-            self.quoteData = si.get_quote_data(self.tickerSymbol)
 
-        except KeyboardInterrupt:
-            pass
-        except ConnectionError:
-            pass
-        except TypeError:
-            print("network may be down")
-            pass
-        except OSError as e:
-            if e.errno == 50:
-                exit()
-        except AssertionError:
-            if gLogOutput:
-                print("assertion error. Likely data not available")
-            else:
-                print("something is up... hold on...")
-            pass
-            
     def Update(self):
         global gHeaderStr
         self.updateTime = datetime.datetime.now()
@@ -485,7 +523,7 @@ class Ticker:
         self.lastFiftyTwoWeekHigh = max(self.fiftyTwoWeekHigh,self.lastFiftyTwoWeekHigh)
                 
         # self.currentVal = si.get_live_price(self.tickerSymbol)
-        self.GetQuoteData()
+        self.quoteData = GetQuoteData(self.tickerSymbol)
  
         self.regularMarketDayLow = min(self.quoteData['regularMarketDayLow'], self.regularMarketDayLow)
         self.regularMarketDayHigh = max(self.quoteData['regularMarketDayHigh'], self.regularMarketDayHigh)
@@ -503,12 +541,14 @@ class Ticker:
             if self.quoteData['quoteType'] == 'CRYPTOCURRENCY':
                 self.aftermarketPrice = self.quoteData['regularMarketPrice']
             else:
-                self.aftermarketPrice = si.get_postmarket_price(self.tickerSymbol)
+                self.aftermarketPrice = self.quoteData['postMarketPrice'] #si.get_postmarket_price(self.tickerSymbol)
             self.previousClose = self.currentVal
             self.percentChangeSinceClose = 0 if self.previousClose == 0 else ((self.aftermarketPrice - self.previousClose) / self.previousClose) * 100
 
         self.lastPercentChange = self.percentChange
         self.percentChange = 0 if self.tickerPrevClose == 0 else ((self.currentVal - self.tickerPrevClose) / self.tickerPrevClose) * 100
+        self.FiftyTwoPercentChange = ((self.fiftyTwoWeekHigh - self.fiftyTwoWeekLow) / self.fiftyTwoWeekLow) * 100
+
         self.percentChangeSinceOpen = 0 if self.tickerOpen == 0 else ((self.currentVal - self.tickerOpen) / self.tickerOpen) * 100
 
 
@@ -534,7 +574,9 @@ def isRegularMarket():
     return regular_market
 
 
-# ------------------------------------------
+# =======================================================================================
+# UpdateMarketStatus
+# =======================================================================================
 def UpdateMarketStatus():
     global pre_pre_market
     global pre_market
@@ -542,10 +584,7 @@ def UpdateMarketStatus():
     global market_closed
     global regular_market
 
-    try:
-        market_status = si.get_market_status()
-    except KeyboardInterrupt:
-        pass
+    market_status = GetQuoteData(kMARKET)
 
     debugLog(f"Market Status: {market_status}")
 
@@ -566,6 +605,39 @@ def UpdateMarketStatus():
     if market_status == 'CLOSED' or market_status == 'POSTPOST':
         market_closed = 1
         # print('market closed')
+
+
+# =======================================================================================
+# GetQuoteData
+# =======================================================================================
+def GetQuoteData(tickerSymbol):
+    quoteData = ''
+
+    try:
+    
+        if tickerSymbol == kMARKET:
+            quoteData = si.get_market_status()
+        else:
+            quoteData = si.get_quote_data(tickerSymbol)
+            
+    except KeyboardInterrupt:
+        pass
+    except ConnectionError:
+        pass
+    except TypeError:
+        print("network may be down")
+        pass
+    except OSError as e:
+        if e.errno == 50:
+            exit()
+    except AssertionError:
+        if gLogOutput:
+            print("assertion error. Likely data not available")
+        else:
+            print("something is up... hold on...")
+        pass
+    
+    return quoteData
 
 
 # =======================================================================================
@@ -593,7 +665,23 @@ def ShowTopMovers(topNum, tempTickers):
 
 
 # =======================================================================================
-# Add a symbols(s) to the current display
+# setRate new update rate
+# =======================================================================================
+def setRate():
+    global updateRate
+
+    print(f'enter new rate (seconds):')
+    newRate = input()
+    if newRate:
+        updateRate = int(newRate)
+        print(f"setting new rate. current rate = {updateRate}\n")
+
+    else:
+        print(f"skipping. not setting new rate. current rate = {updateRate}\n")
+
+
+# =======================================================================================
+# addSymbol Add a symbols(s) to the current display
 # =======================================================================================
 def addSymbol():
     print(f'enter symbols to add (space separated):')
@@ -612,7 +700,7 @@ def addSymbol():
 
 
 # =======================================================================================
-# handle argument parsing
+# displayHelp Handle argument parsing
 # =======================================================================================
 def displayHelp():
     print("\n Help Menu")
@@ -621,6 +709,7 @@ def displayHelp():
     print("Type an 'a' to add new symbols to track.")
     print("Type an 'h' to display help.")
     print("Type an 'f' to toggle 52 week range display")
+    print("Type an 'r' to set a new update rate in seconds")
     print(" ")
     
 
@@ -628,6 +717,7 @@ def displayHelp():
 # buildEmailMessage
 # =======================================================================================
 def cursesMain(stdscr):
+
     stdscr = curses.initscr()
 
     stdscr.clear()
@@ -666,18 +756,21 @@ def sendEmail(msg):
 # queueEmail
 # =======================================================================================
 def queueEmail(in_message):
-    global gEmailQueue;
+    global gEmailQueue
     gEmailQueue.put(in_message)
 
 
-def thread_function(name):
+# =======================================================================================
+# email thread_function
+# =======================================================================================
+def email_thread_function(name):
     global gEmailQueue
     print("Email processor starting")
 
     while True:
         temp_msg = gEmailQueue.get()
         debugLog(f"got message {temp_msg}")
-        if temp_msg == "STOP":
+        if temp_msg == kSTOP:
             print("Stopping Email processor")
             break
         sendEmail(temp_msg)
@@ -685,8 +778,81 @@ def thread_function(name):
 
         time.sleep(.5)
         debugLog("check for email")
-
     print("Email processor stopped")
+
+
+# =======================================================================================
+# queueTicker
+# =======================================================================================
+def queueTicker(in_message):
+    global gTickerQueue
+    global gUseThreading
+
+    if gUseThreading:
+        gTickerQueue.put(in_message)
+
+
+# =======================================================================================
+# ticker thread_function
+# =======================================================================================
+def ticker_thread_function(name):
+    global gTickerQueue
+    print("ticker processor starting")
+    running = True;
+
+    while True:
+        temp_msg = gTickerQueue.get()
+        debugLog(f"got message {temp_msg}")
+        if temp_msg == kSTOP:
+            print("Stopping ticker processor")
+            break
+
+        print(f"{temp_msg} tickers")
+        if temp_msg == kPAUSE:
+            running = False
+            print("pausing ticker processor")
+
+        if temp_msg == kUPDATE and not running:
+            running = True
+            print("resuming ticker processor")
+
+
+        if running:
+            handleTickerUpdate()
+        UpdateMarketStatus()        
+        
+    print("ticker processor stopped")
+
+
+
+
+
+# =======================================================================================
+# myTickerFunc
+# =======================================================================================
+def myTickerFunc(e):
+    return e.GetTicker()
+
+
+# =======================================================================================
+# myPercentChangeFunc
+# =======================================================================================
+def myPercentChangeFunc(e):
+    return e.GetPercentChanged()
+
+
+# =======================================================================================
+# myVolumeFunc
+# =======================================================================================
+def myVolumeFunc(e):
+    return e.GetVolume()
+
+
+# =======================================================================================
+# myIndexFunc
+# =======================================================================================
+def myIndexFunc(e):
+    return e.GetIndex()
 
 
 # =======================================================================================
@@ -694,6 +860,150 @@ def thread_function(name):
 # =======================================================================================
 def sortDict(in_dict):
     sorted_age = sorted(in_dict.items(), key=lambda kv: kv[1])
+
+
+# =======================================================================================
+# sortList
+# =======================================================================================
+def sortList(in_list, item_to_sort):
+
+    if item_to_sort == kSortOrderTickerAsc:
+        in_list.sort(key = myTickerFunc)
+    if item_to_sort == kSortOrderTickerDsc:
+        in_list.sort(reverse=True, key=myTickerFunc)
+
+    if item_to_sort == kSortOrderPercentAsc:
+        in_list.sort(key=myPercentChangeFunc)
+    if item_to_sort == kSortOrderPercentDsc:
+        in_list.sort(reverse=True, key=myPercentChangeFunc)
+
+    if item_to_sort == kSortOrderVolumeAsc:
+        in_list.sort(key=myVolumeFunc)
+    if item_to_sort == kSortOrderVolumeDsc:
+        in_list.sort(reverse=True, key=myVolumeFunc)
+
+    if item_to_sort == kSortOrderIndexAsc:
+        in_list.sort( key=myIndexFunc)
+    if item_to_sort == kSortOrderIndexDsc:
+        in_list.sort(reverse=True, key=myIndexFunc)
+
+
+# =======================================================================================
+# SetSortOrder
+# =======================================================================================
+def SetSortOrder(newSortOrder):
+    global gCurrentSortOrder
+
+    if newSortOrder == kSortOrderTickerAsc:
+        print("sorting by ticker ascending")
+        gCurrentSortOrder = newSortOrder
+
+    if newSortOrder == kSortOrderTickerDsc:
+        print("sorting by ticker descending")
+        gCurrentSortOrder = newSortOrder
+
+    if newSortOrder == kSortOrderPercentAsc:
+        print("sorting by Percent changed ascending")
+        gCurrentSortOrder = newSortOrder
+
+    if newSortOrder == kSortOrderPercentDsc:
+        print("sorting by Percent changed descending")
+        gCurrentSortOrder = newSortOrder
+
+    if newSortOrder == kSortOrderVolumeAsc:
+        print("sorting by Volume ascending")
+        gCurrentSortOrder = newSortOrder
+
+    if newSortOrder == kSortOrderVolumeDsc:
+        print("sorting by Volume descending")
+        gCurrentSortOrder = newSortOrder
+
+    if newSortOrder == kSortOrderIndexAsc:
+        print("sorting by Index ascending")
+        gCurrentSortOrder = newSortOrder
+
+    if newSortOrder == kSortOrderIndexDsc:
+        print("sorting by Index descending")
+        gCurrentSortOrder = newSortOrder
+
+    if newSortOrder in valid_sort_options:
+        sortList(gTickers, gCurrentSortOrder)
+
+    UpdateHeaderString(isPostMarket())
+
+
+# =======================================================================================
+# handleSort
+# =======================================================================================
+def handleSort():
+    global gCurrentSortOrder
+
+    print(f'enter the number for how you want to sort the list:')
+    print(f'{kSortOrderTickerAsc}) Ticker ascending')
+    print(f'{kSortOrderTickerDsc}) Ticker descending')
+    print(f'{kSortOrderPercentAsc}) Percent changed ascending')
+    print(f'{kSortOrderPercentDsc}) Percent changed descending')
+    print(f'{kSortOrderVolumeAsc}) Volume ascending')
+    print(f'{kSortOrderVolumeDsc}) Volume descending')
+    print(f'{kSortOrderIndexAsc}) Index ascending')
+    print(f'{kSortOrderIndexDsc}) Index descending')
+    print(f'return key to exit')
+
+    newSortOrder = input()
+    if newSortOrder:
+        SetSortOrder(newSortOrder)
+
+
+# =======================================================================================
+# UpdateTickers
+# =======================================================================================
+def UpdateTickers():
+    global gTickers
+    for myTicker in gTickers:
+        myTicker.Update()
+
+
+# =======================================================================================
+# handleTickerUpdate
+# =======================================================================================
+def handleTickerUpdate():
+    global gShowTopMovers
+    global gTopMoversTickers
+    global gCurrentSortOrder
+    global gTickerThread
+    global gTickers
+    global gHeaderStr
+
+    now = datetime.datetime.now()
+
+    # update the list of symbols
+    UpdateTickers()
+
+    # if the list is sorted update the sort list
+    if gCurrentSortOrder:
+        sortList(gTickers, gCurrentSortOrder)
+
+    # if there are top movers to show
+    if gTopMoversTickers:
+        for myTicker in gTopMoversTickers:
+            myTicker.Update()
+
+    timeStr = now.strftime('%Y-%m-%d %H:%M:%S')
+
+    print(f'{timeStr:<19}\n {gHeaderStr}')
+
+    for myTicker in gTickers:
+        myTicker.PrintTicker()
+
+    if gTopMoversTickers:
+        print('-')
+        print(f" Top {gShowTopMovers} Movers")
+        print('-')
+        for myTicker in gTopMoversTickers:
+            myTicker.PrintTicker()
+
+    print('-')
+
 
 # =======================================================================================
 # main code
@@ -703,9 +1013,11 @@ def main():
     global gShowSorted
     global gMailThread
     global gSendEmail
+    global gCurrentSortOrder
+    global gTickerThread
 
     if gSendEmail:
-        gMailThread = threading.Thread(target=thread_function, args=(1,))
+        gMailThread = threading.Thread(target=email_thread_function, args=(1,))
         gMailThread.start()
 
     gColumns.append(HeaderRec(" ",2))
@@ -714,93 +1026,108 @@ def main():
     gColumns.append(HeaderRec("Price",14))
     gColumns.append(HeaderRec("Open",8))
     gColumns.append(HeaderRec("% Chg",8))
-    gColumns.append(HeaderRec("Lo    -    Hi",14))
-    gColumns.append(HeaderRec("52 wk low - high",8))
-    gColumns.append(HeaderRec("After Hours",8))
-
+    gColumns.append(HeaderRec("Lo    -    Hi", 14))
+    gColumns.append(HeaderRec("52 wk low - high", 8))
+    gColumns.append(HeaderRec("After Hours", 8))
     print("Enter q or esc to quit. h for help\n")
 
     # See if the market is open, pre or post. Quit if closed
     UpdateMarketStatus()
 
     # Top mover list building
-
     if gShowTopMovers:
-        ShowTopMovers(showTopMovers, gTopMoversList)
+        ShowTopMovers(gShowTopMovers, gTopMoversList)
         for ticker, name in gTopMoversList.items():
             gTopMoversTickers.append(Ticker(name, ticker))
 
-
     # build up main listing
     for ticker, tickerName in theTickers.items():
-        gTickers.append(Ticker(tickerName, ticker))
+        tempTicker = Ticker(tickerName, ticker)
+        tempTicker.SetIndex(len(gTickers))
+        gTickers.append(tempTicker)
+
+    if gUseThreading:
+        gTickerThread = threading.Thread(target=ticker_thread_function, args=(1,))
+        gTickerThread.start()
 
     kb = KBHit()
 
     # main while loop
     while 1:
-        UpdateMarketStatus()
-        now = datetime.datetime.now()
-
-        # update the list of symbols
-        for myTicker in gTickers:
-            myTicker.Update()
-
-        # if there are top movers to show
-        if gTopMoversTickers:
-            for myTicker in gTopMoversTickers:
-                myTicker.Update()
-
-        timeStr = now.strftime('%Y-%m-%d %H:%M:%S')
-
-        print(f'{timeStr:<19}\n {gHeaderStr}')
-
-        for myTicker in gTickers:
-            myTicker.PrintTicker()
-
-        if gTopMoversTickers:
-            print('-')
-            print(f" Top {gShowTopMovers} Movers")
-            print('-')
-            for myTicker in gTopMoversTickers:
-                myTicker.PrintTicker()
+        if not gUseThreading:
+            handleTickerUpdate()
+        else:
+            queueTicker(kUPDATE)
 
         if isMarketClosed():
             print("Market is now closed.")
             exit()
 
-        print('-')
-
         count = updateRate * 100
         while count:
             if kb.kbhit():
                 c = kb.getch()
-                if ord(c) == 27 or c == 'q':  # ESC
+                if ord(c) == 27 or c == 'q':    # ESC or quit
                     print('stopping...')
                     if gSendEmail:
-                        queueEmail("STOP")
+                        queueEmail(kSTOP)
                         time.sleep(1)
+                    if gUseThreading:
+                        queueTicker(kSTOP)
+                        time.sleep(1)                        
                     print('done')
                     exit()
-                if c == 'a':
+                if c == 'a':                    # add symbols
                     kb.set_normal_term()
                     addSymbol()
+                    if gCurrentSortOrder:
+                        UpdateTickers()
+                        UpdateHeaderString(isPostMarket())
+                        sortList(gTickers, gCurrentSortOrder)
                     kb = KBHit()
+                    count = 0
                     break
-                if c == 'f':
+                if c == 'r':                    # set a new rate
+                    kb.set_normal_term()
+                    queueTicker(kPAUSE)
+                    setRate()
+                    kb = KBHit()
+                    count = 0
+                    break
+                if c in valid_sort_options:     # fast access to sort options
+                    SetSortOrder(c)
+                    count = 0
+                    break
+                if c == 's':                    # sort menu
+                    kb.set_normal_term()
+                    queueTicker(kPAUSE)
+                    handleSort()
+                    kb = KBHit()
+                    count = 0
+                    break
+                if c == 'f':                    # set the option for 52 week view
                     gShowFiftyTwo = not gShowFiftyTwo
                     tempStr = f"Setting 52 week option "
                     tempStr += "on" if gShowFiftyTwo else "off"
                     print(tempStr)
-                    count = 1
+                    count = 0
+
                     break
                 if c == 'h':
+                    queueTicker(kPAUSE)
                     displayHelp()
-                    count = 1
+                    count = 0
                     break
-            count -= 1
+            if count == 0:
+                if gUseThreading:
+                    print("sending an update message")
+                    queueTicker(kUPDATE)
+            else:
+                count -= 1
             time.sleep(.01)  # Sleep for 10ms seconds
 
+            if not gUseThreading:
+                UpdateMarketStatus()
     kb.set_normal_term()
 
 
