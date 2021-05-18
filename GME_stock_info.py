@@ -10,6 +10,9 @@ import os
 # import curses
 import smtplib
 import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 import queue as que
 import threading
 
@@ -82,7 +85,7 @@ class KBHit:
         #
 
         if os.name == 'nt':
-            msvcrt.getch() # skip 0xE0
+            msvcrt.getch()  # skip 0xE0
             c = msvcrt.getch()
             vals = [72, 77, 80, 75]
 
@@ -124,7 +127,7 @@ valid_sort_options = {'1', '2', '3', '4', '5', '6', '7', '8'}
 gCurrentSortOrder = None
 gEmailQueue = que.Queue(maxsize=100)
 gMailThread = None
-gUseThreading = False
+# gUseThreading = False
 gTickerThread = None
 gTickerQueue = que.Queue(maxsize=10)
 
@@ -204,8 +207,6 @@ def BuildTickerDict(in_dict, in_list):
             tempStr = quoteData['shortName']
 
         in_dict[theSymbol] = tempStr[0:20]
-
-    
     debugLog(in_dict)
 
 
@@ -256,11 +257,12 @@ parser.add_argument('--verbose', help='Enable verbose output. Mostly for debuggi
 parser.add_argument('--alert', help='Ring the bell on new lows and new highs', action='store_true')
 parser.add_argument('--top', type=int, default=0, help='Show top moving stocks, provide a number less than 100')
 parser.add_argument('--file', type=str, default='', help='a file containing a list of tickers')
-parser.add_argument('--rate', type=int, help='How many seconds to pause between updates.', )
+parser.add_argument('--rate', type=int, help='How many seconds to pause between updates.' )
 parser.add_argument('--fiftytwo', help='Show the 52 week high low', action='store_true')
 parser.add_argument('--curses', help='Show the list using curses.', action='store_true')
 parser.add_argument('--email', help='If alerts are on, send an email also', action='store_true')
 parser.add_argument('--thread', help='use threading for updates', action='store_true')
+parser.add_argument('--sort', type=int, default=0, help='Sort by column ( 1. Ticker ascending 2. Ticker descending 3. Percent ascending 4. Percent descending 5. Vol ascending 6. Vol descending 7. Added ascending 8. Added descending )')
 parser.add_argument('tickers', metavar='symbols', type=str, nargs='*', help='A one or more stock symbols that you want to display.')
 
 args = parser.parse_args()
@@ -271,6 +273,11 @@ gBell = args.alert
 gUseCurses = args.curses
 gSendEmail = args.email
 gUseThreading = args.thread
+gShowSorted = args.sort
+
+if gShowSorted:
+    if gShowSorted.__str__() in valid_sort_options:
+        gCurrentSortOrder = gShowSorted
 
 # gLogOutput = True
 
@@ -367,7 +374,6 @@ class Ticker:
         self.tickerPrevClose = self.quoteData['regularMarketPreviousClose']
         self.lastVal = self.currentVal
 
-
     def __repr__(self):
         return "Ticker('{}', {})".format(self.tickerName, self.tickerSymbol)
 
@@ -426,6 +432,7 @@ class Ticker:
 
         newMarketStr = ''
         newMarketDir = ''
+        newChartDir = ''
         newMarketColor = ''
         warningStr = ' '
         warningColor = rst
@@ -435,6 +442,7 @@ class Ticker:
 
         if newLowStr != '':
             newMarketDir = downArrow
+            newChartDir = "📉"
             newMarketStr = newLowStr
             newMarketColor = bg.red
             warningStr = downArrow
@@ -445,6 +453,7 @@ class Ticker:
 
         if newHighStr != '':
             newMarketDir = upArrow
+            newChartDir = "📈"
             newMarketStr = newHighStr
             newMarketColor = bg.green
             warningStr = upArrow
@@ -492,6 +501,7 @@ class Ticker:
             outputStr += f" {newMarketColor}{newMarketStr}{newMarketDir} {rst}"
 
         print(outputStr)
+
         if gSendEmail and newMarketStr:
             tempSymbol = self.tickerSymbol.upper()
             # build clean output string no terminal commands
@@ -509,9 +519,65 @@ class Ticker:
             # outputStr += f"Status: {newMarketStr}\n"
             curValStr = f"$ {self.currentVal:.2f} {self.percentChange:5.1f}%"
 
-            tempMsg = buildEmailMessage(tempSymbol, curValStr, self.tickerName,  newMarketStr, f"{tempSymbol}: {self.tickerName} {newMarketStr} \n\n {outputStr} \n")
+            body_text = f"{tempSymbol}: {self.tickerName} {newMarketStr} \n\n {outputStr} \n"
+
+            outputStr = f"Ticker: {self.tickerSymbol:<18}<br>\n"
+            outputStr += f"Name:   {self.tickerName:<22}<br>\n"
+            outputStr += f"Price:      {self.currentVal:18.2f}<br>\n"
+            outputStr += f"Prv Close:  {self.tickerPrevClose:18.2f}<br>\n"
+            outputStr += f"% Change:   {self.percentChange:18.2f}%<br>\n"
+            outputStr += f"Day Low:    {self.regularMarketDayLow:18.2f}<br>\n"
+            outputStr += f"Day High:   {self.regularMarketDayHigh:18.2f}<br>\n"
+            outputStr += f"52 Wk Lo:   {self.fiftyTwoWeekLow:18.2f}<br>\n"
+            outputStr += f"52 Wk Hi:   {self.fiftyTwoWeekHigh:18.2f}<br><hr><br>\n"
+
+            # Build a table
+            outputStr += f"""
+            <table style="width:30%">
+              <tr>
+                <th>{self.tickerName:<22}</th>
+                <th style="text-align:center">{self.tickerSymbol:<18}</th> 
+              </tr>
+              <tr>
+                <td>Price</td>
+                <td style="text-align:right"><span>{self.currentVal:.2f}</span></td>
+              </tr>
+              <tr>
+                <td>Previous Close</td>
+                <td style="text-align:right"><span>{self.tickerPrevClose:.2f}</span></td>
+              </tr>
+              <tr>
+                <td>Percent Changed</td>
+                <td style="text-align:right"><span>{self.percentChange:.3f}%</span></td>
+              </tr>
+              <tr>
+                <td>Market Day Low</td>
+                <td style="text-align:right"><span>{self.regularMarketDayLow:.2f}</span></td>
+              </tr>              
+              <tr>
+                <td>Market Day High</td>
+                <td style="text-align:right"><span>{self.regularMarketDayHigh:.2f}</span></td>
+              </tr>
+              <tr>
+                <td>52 Week Low</td>
+                <td style="text-align:right"><span>{self.fiftyTwoWeekLow:.2f}</span></td>
+              </tr>
+              <tr>
+                <td>52 Week High</td>
+                <td style="text-align:right"><span>{self.fiftyTwoWeekHigh:.2f}</span></td>
+              </tr>
+              <tr>
+                <td>Volume</td>
+                <td style="text-align:right"><span>{self.marketVolume:>18,d}</span></td>
+              </tr>
+            </table>"""
+
+            body_html = f"{tempSymbol}: {self.tickerName} {newMarketStr} <br><br> {outputStr} \n"
+
+            tempMsg = buildEmailMessage(tempSymbol, curValStr, self.tickerName,  newMarketStr, body_text, body_html, newMarketDir, newChartDir)
             # print(outputStr)
             queueEmail(tempMsg)
+            # sendEmail(tempMsg)
 
     def Update(self):
         global gHeaderStr
@@ -520,7 +586,7 @@ class Ticker:
         self.lastRegularMarketDayLow = min(self.regularMarketDayLow, self.lastRegularMarketDayLow)
         self.lastRegularMarketDayHigh = max(self.regularMarketDayHigh, self.lastRegularMarketDayHigh)
         self.lastFiftyTwoWeekLow = min(self.fiftyTwoWeekLow, self.lastFiftyTwoWeekLow)
-        self.lastFiftyTwoWeekHigh = max(self.fiftyTwoWeekHigh,self.lastFiftyTwoWeekHigh)
+        self.lastFiftyTwoWeekHigh = max(self.fiftyTwoWeekHigh, self.lastFiftyTwoWeekHigh)
                 
         # self.currentVal = si.get_live_price(self.tickerSymbol)
         self.quoteData = GetQuoteData(self.tickerSymbol)
@@ -541,7 +607,7 @@ class Ticker:
             if self.quoteData['quoteType'] == 'CRYPTOCURRENCY':
                 self.aftermarketPrice = self.quoteData['regularMarketPrice']
             else:
-                self.aftermarketPrice = self.quoteData['postMarketPrice'] #si.get_postmarket_price(self.tickerSymbol)
+                self.aftermarketPrice = self.quoteData['postMarketPrice']  # si.get_postmarket_price(self.tickerSymbol)
             self.previousClose = self.currentVal
             self.percentChangeSinceClose = 0 if self.previousClose == 0 else ((self.aftermarketPrice - self.previousClose) / self.previousClose) * 100
 
@@ -694,7 +760,36 @@ def addSymbol():
 
         print(newTickersToAdd)
         for ticker, tickerName in newTickersToAdd.items():
-          gTickers.append(Ticker(tickerName, ticker))
+            gTickers.append(Ticker(tickerName, ticker))
+    else:
+        print("skipping. no symbols entered\n")
+
+
+# =======================================================================================
+# deleteSymbol remove a symbols(s) to the current display
+# =======================================================================================
+def deleteSymbol():
+    print(f'Enter symbols to delete (space separated list):')
+    newSymbols = input()
+    if newSymbols:
+        newTickersToDelete = {}
+        list1 = list(newSymbols.split(" "))
+        print(list1)
+        BuildTickerDict(newTickersToDelete, list1)
+
+        print(newTickersToDelete)
+        for ticker, tickerName in newTickersToDelete.items():
+            count = 0
+            for tempTicker in gTickers:
+                cmpStr = ticker.upper()
+                if tempTicker.GetTicker() == cmpStr:
+                    tempObject = gTickers.pop(count)
+                    print(f"deleting: {cmpStr}")
+                    del tempObject
+                    break
+                else:
+                    count += 1
+
     else:
         print("skipping. no symbols entered\n")
 
@@ -729,9 +824,68 @@ def cursesMain(stdscr):
 # =======================================================================================
 # buildEmailMessage
 # =======================================================================================
-def buildEmailMessage(inTicker, inValue, inName, inSubject,  inBody):
-    outMessage = f"Subject:{inTicker}: {inValue} {inName} {inSubject} \n\n {inBody}"
-    return outMessage
+def buildEmailMessage(inTicker, inValue, inName, inSubject,  inBodyTEXT, inBodyHTML, direction, chart):
+    # outMessage = f"Subject:{inTicker}: {inValue} {inName} {inSubject} \n\n {inBody}"
+    
+    sender_email = "gme.dev.2003@gmail.com"
+    receiver_email = "gme.dev.2003@gmail.com"
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = f"{chart} {direction} {inTicker}:  {inValue} {inName} {inSubject}"
+    message["From"] = sender_email
+    message["To"] = receiver_email    
+
+    eol = "\n"
+    br = "<br>"
+    text = inBodyTEXT
+
+    html = f"<html>{eol}"
+    html += """
+            <head>
+            <style>
+            table {
+              font-family: helvetica, sans-serif;
+              border-collapse: collapse;
+              width: 20%;
+            }
+            th, td {
+                padding: 5px;
+            }
+            td, th {
+              border: 1px solid #dddddd;
+              text-align: left;
+              padding: 8px;
+            }
+            th {
+              background-color:#0099ff;
+              color:white
+            }
+            tr:nth-child(even) {
+                background-color: #eeeeeee;
+            }
+            td span {
+                text-align: right;
+                display: inline-block;
+            }
+            </style>
+            </head>
+            """
+    html += f" <body>{eol}"
+    html += f" {inBodyHTML}<br>{eol}"
+    html += f" </body>{eol}"
+    html += f"</html>{eol}"
+
+    # Turn these into plain/html MIMEText objects
+    part1 = MIMEText(text, "plain")
+    part2 = MIMEText(html, "html")
+
+    # Add HTML/plain-text parts to MIMEMultipart message
+    # The email client will try to render the last part first
+    message.attach(part1)
+    message.attach(part2)
+    # print(message)
+    return message
+    # return outMessage
 
 
 # =======================================================================================
@@ -741,16 +895,15 @@ def sendEmail(msg):
     port = 465  # For SSL
     password = "Testing$3512"
     sender_email = "gme.dev.2003@gmail.com"
-    receiver_email = "mxmora@gmail.com"
+    receiver_email = "gme.dev.2003@gmail.com"
     smtp_server = "smtp.gmail.com"
     
     # Create a secure SSL context
     context = ssl.create_default_context()
-    # print(f"Sending email :{msg} ")
+    debugLog(f"Sending email :{msg} ")
     with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
         server.login(sender_email, password)
-        server.sendmail(sender_email, receiver_email, msg)
-
+        server.sendmail(sender_email, receiver_email, msg.as_string())
 
 # =======================================================================================
 # queueEmail
@@ -807,7 +960,7 @@ def ticker_thread_function(name):
             print("Stopping ticker processor")
             break
 
-        print(f"{temp_msg} tickers")
+        debugLog(f"{temp_msg} tickers")
         if temp_msg == kPAUSE:
             running = False
             print("pausing ticker processor")
@@ -822,9 +975,6 @@ def ticker_thread_function(name):
         UpdateMarketStatus()        
         
     print("ticker processor stopped")
-
-
-
 
 
 # =======================================================================================
@@ -868,7 +1018,7 @@ def sortDict(in_dict):
 def sortList(in_list, item_to_sort):
 
     if item_to_sort == kSortOrderTickerAsc:
-        in_list.sort(key = myTickerFunc)
+        in_list.sort(key=myTickerFunc)
     if item_to_sort == kSortOrderTickerDsc:
         in_list.sort(reverse=True, key=myTickerFunc)
 
@@ -1008,6 +1158,18 @@ def handleTickerUpdate():
 # =======================================================================================
 # main code
 # =======================================================================================
+def CheckSortOrder():
+    global gCurrentSortOrder
+    global gTickers
+    global gCurrentSortOrder
+    if gCurrentSortOrder:
+        UpdateTickers()
+        UpdateHeaderString(isPostMarket())
+        sortList(gTickers, gCurrentSortOrder)
+
+# =======================================================================================
+# main code
+# =======================================================================================
 def main():
     global gShowFiftyTwo
     global gShowSorted
@@ -1052,7 +1214,10 @@ def main():
 
     kb = KBHit()
 
+    CheckSortOrder()
+
     # main while loop
+
     while 1:
         if not gUseThreading:
             handleTickerUpdate()
@@ -1080,10 +1245,14 @@ def main():
                 if c == 'a':                    # add symbols
                     kb.set_normal_term()
                     addSymbol()
-                    if gCurrentSortOrder:
-                        UpdateTickers()
-                        UpdateHeaderString(isPostMarket())
-                        sortList(gTickers, gCurrentSortOrder)
+                    CheckSortOrder()
+                    kb = KBHit()
+                    count = 0
+                    break
+                if c == 'd':                    # delete symbols
+                    kb.set_normal_term()
+                    deleteSymbol()
+                    CheckSortOrder()
                     kb = KBHit()
                     count = 0
                     break
