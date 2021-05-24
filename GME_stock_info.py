@@ -3,6 +3,7 @@
 # import stock_info module from yahoo_fin
 from yahoo_fin import stock_info as si
 import time
+from tqdm import tqdm
 import datetime
 import argparse
 import sys
@@ -131,9 +132,9 @@ gMailThread = None
 gTickerThread = None
 gTickerQueue = que.Queue(maxsize=10)
 
-#gShowFiftyTwo = 0
-gShowSorted = True
-#gSendEmail = False
+# gShowFiftyTwo = 0
+# gShowSorted = True
+# gSendEmail = False
 
 gColumns = []
 gTickers = []
@@ -193,21 +194,37 @@ def debugLog(dbg_msg):
 # =======================================================================================
 def BuildTickerDict(in_dict, in_list):
 
-    for theSymbol in in_list:
-       
+    for theSymbol in tqdm(in_list,desc="Verifing Tickers..."):
+        goodsymbol = False
+
         debugLog(theSymbol)
-        quoteData = si.get_quote_data(theSymbol)
-
-        debugLog(quoteData)
         try:
-            tempStr = quoteData[kDisplayName]
-        except KeyError:
-           
-            debugLog('no displayName')
-            tempStr = quoteData['shortName']
+            foo = si.get_earnings(theSymbol)
+            goodsymbol = True
+        except TypeError as ok:
+            goodsymbol = True
+            pass
 
-        in_dict[theSymbol] = tempStr[0:20]
+        except KeyError as err:
+            goodsymbol = False
+            pass
+
+        if goodsymbol:
+
+            quoteData = si.get_quote_data(theSymbol)
+
+            debugLog(quoteData)
+            try:
+                tempStr = quoteData[kDisplayName]
+            except KeyError:
+           
+                debugLog('no displayName')
+                tempStr = quoteData['shortName']
+
+            in_dict[theSymbol] = tempStr[0:20]
     debugLog(in_dict)
+    return True
+
 
 
 # =======================================================================================
@@ -257,7 +274,7 @@ parser.add_argument('--verbose', help='Enable verbose output. Mostly for debuggi
 parser.add_argument('--alert', help='Ring the bell on new lows and new highs', action='store_true')
 parser.add_argument('--top', type=int, default=0, help='Show top moving stocks, provide a number less than 100')
 parser.add_argument('--file', type=str, default='', help='a file containing a list of tickers')
-parser.add_argument('--rate', type=int, help='How many seconds to pause between updates.' )
+parser.add_argument('--rate', type=int, help='How many seconds to pause between updates.')
 parser.add_argument('--fiftytwo', help='Show the 52 week high low', action='store_true')
 parser.add_argument('--curses', help='Show the list using curses.', action='store_true')
 parser.add_argument('--email', help='If alerts are on, send an email also', action='store_true')
@@ -277,7 +294,7 @@ gShowSorted = args.sort
 
 if gShowSorted:
     if gShowSorted.__str__() in valid_sort_options:
-        gCurrentSortOrder = gShowSorted
+        gCurrentSortOrder = gShowSorted.__str__()
 
 # gLogOutput = True
 
@@ -301,6 +318,7 @@ else:
 
     debugLog(f'No list supplied. using default : {theTickers}')
         
+
 class HeaderRec:
     def __init__(self, in_name, in_width):
         self.name = in_name
@@ -359,19 +377,20 @@ class Ticker:
         self.timeToPrint = 0
         
         self.quoteData = GetQuoteData(self.tickerSymbol)
-        self.currentVal = self.quoteData['regularMarketPrice']
+        self.currentVal = float(self.quoteData['regularMarketPrice'])
         
-        self.lastRegularMarketDayLow = self.quoteData['regularMarketDayLow']
-        self.lastRegularMarketDayHigh = self.quoteData['regularMarketDayHigh']
-        self.regularMarketDayLow = self.lastRegularMarketDayLow
-        self.regularMarketDayHigh =  self.lastRegularMarketDayHigh
-        self.lastFiftyTwoWeekLow = self.quoteData['fiftyTwoWeekLow']
-        self.lastFiftyTwoWeekHigh = self.quoteData['fiftyTwoWeekHigh']
-        self.marketVolume = self.quoteData['regularMarketVolume']
-        self.fiftyTwoWeekHigh = self.lastFiftyTwoWeekHigh 
-        self.fiftyTwoWeekLow = self.lastFiftyTwoWeekLow
-        self.tickerOpen = self.quoteData['regularMarketOpen']
-        self.tickerPrevClose = self.quoteData['regularMarketPreviousClose']
+        self.lastRegularMarketDayLow = float(self.quoteData['regularMarketDayLow'])
+        self.lastRegularMarketDayHigh = float(self.quoteData['regularMarketDayHigh'])
+        self.regularMarketDayLow = float(self.lastRegularMarketDayLow)
+        self.regularMarketDayHigh = float(self.lastRegularMarketDayHigh)
+        self.lastFiftyTwoWeekLow = float(self.quoteData['fiftyTwoWeekLow'])
+        self.lastFiftyTwoWeekHigh = float(self.quoteData['fiftyTwoWeekHigh'])
+        self.marketVolume = int(self.quoteData['regularMarketVolume'])
+        self.fiftyTwoWeekHigh = float(self.lastFiftyTwoWeekHigh)
+        self.fiftyTwoWeekLow = float(self.lastFiftyTwoWeekLow)
+        self.tickerOpen = float(self.quoteData['regularMarketOpen'])
+        self.tickerPrevClose = float(self.quoteData['regularMarketPreviousClose'])
+        self.marketCap = float(self.quoteData.get('marketCap', 0))
         self.lastVal = self.currentVal
 
     def __repr__(self):
@@ -403,14 +422,14 @@ class Ticker:
         newHighStr = ''
 
         if self.regularMarketDayHigh > self.lastRegularMarketDayHigh:
-            self.currentVal = max (self.currentVal , self.regularMarketDayHigh)
+            self.currentVal = max(self.currentVal, self.regularMarketDayHigh)
             
             newHighStr = f'new market day high: {self.regularMarketDayHigh:9.2f}'
             if gBell:
                 newHighStr += '\u0007'
 
         if self.regularMarketDayLow < self.lastRegularMarketDayLow:
-            self.currentVal = min(self.currentVal , self.regularMarketDayLow)
+            self.currentVal = min(self.currentVal, self.regularMarketDayLow)
 
             newLowStr = f'new market day low: {self.regularMarketDayLow:9.2f}'
             if gBell:
@@ -503,44 +522,63 @@ class Ticker:
         print(outputStr)
 
         if gSendEmail and newMarketStr:
+            nl = "\n"
+            br = "<br>"
+
             tempSymbol = self.tickerSymbol.upper()
             # build clean output string no terminal commands
-            outputStr = f"Ticker: {self.tickerSymbol:<18}\n"
-            outputStr += f"Name:   {self.tickerName:<22}\n"
-            outputStr += f"Price:      {self.currentVal:18.2f}\n"
-            outputStr += f"Prv Close:  {self.tickerPrevClose:18.2f}\n"
-            outputStr += f"% Change:   {self.percentChange:18.2f}%\n"
-            outputStr += f"Day Low:    {self.regularMarketDayLow:18.2f}\n"
-            outputStr += f"Day High:   {self.regularMarketDayHigh:18.2f}\n"
-            outputStr += f"52 Wk Lo:   {self.fiftyTwoWeekLow:18.2f}\n"
-            outputStr += f"52 Wk Hi:   {self.fiftyTwoWeekHigh:18.2f}\n"
+            outputStr = f"Ticker: {self.tickerSymbol:<18}{nl}"
+            outputStr += f"Name:   {self.tickerName:<22}{nl}"
+            outputStr += f"Price:      {self.currentVal:18.2f}{nl}"
+            outputStr += f"Prv Close:  {self.tickerPrevClose:18.2f}{nl}"
+            outputStr += f"% Change:   {self.percentChange:18.2f}%{nl}"
+            outputStr += f"Day Low:    {self.regularMarketDayLow:18.2f}{nl}"
+            outputStr += f"Day High:   {self.regularMarketDayHigh:18.2f}{nl}"
+            outputStr += f"52 Wk Lo:   {self.fiftyTwoWeekLow:18.2f}{nl}"
+            outputStr += f"52 Wk Hi:   {self.fiftyTwoWeekHigh:18.2f}{nl}"
 
-            outputStr += f"Volume:  {self.marketVolume:>18,d}.00\n"
+            outputStr += f"Volume:  {self.marketVolume:>18,d}.00{nl}"
             # outputStr += f"Status: {newMarketStr}\n"
             curValStr = f"$ {self.currentVal:.2f} {self.percentChange:5.1f}%"
 
-            body_text = f"{tempSymbol}: {self.tickerName} {newMarketStr} \n\n {outputStr} \n"
+            body_text = f"{tempSymbol}: {self.tickerName} {newMarketStr}{nl}{nl} {outputStr}{nl}"
+            timeStr = self.updateTime.strftime('%Y-%m-%d %H:%M:%S')
 
-            outputStr = f"Ticker: {self.tickerSymbol:<18}<br>\n"
-            outputStr += f"Name:   {self.tickerName:<22}<br>\n"
-            outputStr += f"Price:      {self.currentVal:18.2f}<br>\n"
-            outputStr += f"Prv Close:  {self.tickerPrevClose:18.2f}<br>\n"
-            outputStr += f"% Change:   {self.percentChange:18.2f}%<br>\n"
-            outputStr += f"Day Low:    {self.regularMarketDayLow:18.2f}<br>\n"
-            outputStr += f"Day High:   {self.regularMarketDayHigh:18.2f}<br>\n"
-            outputStr += f"52 Wk Lo:   {self.fiftyTwoWeekLow:18.2f}<br>\n"
-            outputStr += f"52 Wk Hi:   {self.fiftyTwoWeekHigh:18.2f}<br><hr><br>\n"
-
-            # Build a table
-            outputStr += f"""
+            body_html = f"""
+            <h2>
+            {tempSymbol}: {self.tickerName} {newMarketStr}
+            </h2> 
+            {br}
+            {br}
+            <hr>
+            {br}
+            Ticker:          {self.tickerSymbol:<18}{br}
+            Name:            {self.tickerName:<22}{br}
+            Price:           {self.currentVal:18.2f}{br}
+            Previous Close:  {self.tickerPrevClose:18.2f}{br}
+            Percent Change:  {self.percentChange:18.2f}%{br}
+            Day Low:         {self.regularMarketDayLow:18.2f}{br}
+            Day High:        {self.regularMarketDayHigh:18.2f}{br}
+            52 Wk Lo:        {self.fiftyTwoWeekLow:18.2f}{br}
+            52 Wk Hi:        {self.fiftyTwoWeekHigh:18.2f}{br}
+            <hr>
+            {br}
             <table style="width:30%">
               <tr>
                 <th>{self.tickerName:<22}</th>
-                <th style="text-align:center">{self.tickerSymbol:<18}</th> 
+                <th style="text-align:right">{self.tickerSymbol:<18}</th> 
               </tr>
+              <tr>
+                <td>Date</td>
+                <td style="text-align:right"><span>{timeStr}</span></td>
+              </tr>              
               <tr>
                 <td>Price</td>
                 <td style="text-align:right"><span>{self.currentVal:.2f}</span></td>
+              </tr>
+              <tr>
+                <td>Market Open</td>
+                <td style="text-align:right"><span>{self.tickerOpen:.2f}</span></td>
               </tr>
               <tr>
                 <td>Previous Close</td>
@@ -570,9 +608,11 @@ class Ticker:
                 <td>Volume</td>
                 <td style="text-align:right"><span>{self.marketVolume:>18,d}</span></td>
               </tr>
+              <tr>
+                <td>Market Cap</td>
+                <td style="text-align:right">${self.marketCap:,.0f}</td>
+              </tr>              
             </table>"""
-
-            body_html = f"{tempSymbol}: {self.tickerName} {newMarketStr} <br><br> {outputStr} \n"
 
             tempMsg = buildEmailMessage(tempSymbol, curValStr, self.tickerName,  newMarketStr, body_text, body_html, newMarketDir, newChartDir)
             # print(outputStr)
@@ -593,21 +633,22 @@ class Ticker:
  
         self.regularMarketDayLow = min(self.quoteData['regularMarketDayLow'], self.regularMarketDayLow)
         self.regularMarketDayHigh = max(self.quoteData['regularMarketDayHigh'], self.regularMarketDayHigh)
-        self.currentVal = self.quoteData['regularMarketPrice']
-        self.marketVolume = self.quoteData['regularMarketVolume']
-        self.fiftyTwoWeekHigh = self.quoteData['fiftyTwoWeekHigh']
-        self.fiftyTwoWeekLow = self.quoteData['fiftyTwoWeekLow']
-        self.tickerOpen = self.quoteData['regularMarketOpen']
-        self.tickerPrevClose = self.quoteData['regularMarketPreviousClose']
+        self.currentVal = float(self.quoteData['regularMarketPrice'])
+        self.marketVolume = int(self.quoteData['regularMarketVolume'])
+        self.fiftyTwoWeekHigh = float(self.quoteData['fiftyTwoWeekHigh'])
+        self.fiftyTwoWeekLow = float(self.quoteData['fiftyTwoWeekLow'])
+        self.tickerOpen = float(self.quoteData['regularMarketOpen'])
+        self.tickerPrevClose = float(self.quoteData['regularMarketPreviousClose'])
+        self.marketCap = float(self.quoteData.get('marketCap', 0))
 
         UpdateHeaderString(isPostMarket())
         
         if isPostMarket():
             self.aftermarket = 1
             if self.quoteData['quoteType'] == 'CRYPTOCURRENCY':
-                self.aftermarketPrice = self.quoteData['regularMarketPrice']
+                self.aftermarketPrice = float(self.quoteData['regularMarketPrice'])
             else:
-                self.aftermarketPrice = self.quoteData['postMarketPrice']  # si.get_postmarket_price(self.tickerSymbol)
+                self.aftermarketPrice = float(self.quoteData.get('postMarketPrice', 0))  # si.get_postmarket_price(self.tickerSymbol)
             self.previousClose = self.currentVal
             self.percentChangeSinceClose = 0 if self.previousClose == 0 else ((self.aftermarketPrice - self.previousClose) / self.previousClose) * 100
 
@@ -761,6 +802,7 @@ def addSymbol():
         print(newTickersToAdd)
         for ticker, tickerName in newTickersToAdd.items():
             gTickers.append(Ticker(tickerName, ticker))
+
     else:
         print("skipping. no symbols entered\n")
 
@@ -836,44 +878,43 @@ def buildEmailMessage(inTicker, inValue, inName, inSubject,  inBodyTEXT, inBodyH
     message["To"] = receiver_email    
 
     eol = "\n"
-    br = "<br>"
     text = inBodyTEXT
 
-    html = f"<html>{eol}"
-    html += """
-            <head>
+    html = f"""
+    <html>
+        <head>
             <style>
-            table {
-              font-family: helvetica, sans-serif;
-              border-collapse: collapse;
-              width: 20%;
-            }
-            th, td {
-                padding: 5px;
-            }
-            td, th {
-              border: 1px solid #dddddd;
-              text-align: left;
-              padding: 8px;
-            }
-            th {
-              background-color:#0099ff;
-              color:white
-            }
-            tr:nth-child(even) {
-                background-color: #eeeeeee;
-            }
-            td span {
-                text-align: right;
-                display: inline-block;
-            }
+                table {{
+                  font-family: helvetica, sans-serif;
+                  border-collapse: collapse;
+                  width: 20%;
+                }}
+                th, td {{
+                    padding: 5px;
+                }}
+                td, th {{
+                  border: 1px solid #dddddd;
+                  text-align: left;
+                  padding: 8px;
+                }}
+                th {{
+                  background-color:#0099ff;
+                  color:white
+                }}
+                tr:nth-child(even) {{
+                    background-color: #eeeeeee;
+                }}
+                td span {{
+                    text-align: right;
+                    display: inline-block;
+                }}
             </style>
-            </head>
-            """
-    html += f" <body>{eol}"
-    html += f" {inBodyHTML}<br>{eol}"
-    html += f" </body>{eol}"
-    html += f"</html>{eol}"
+        </head>
+        <body>
+        {inBodyHTML}<br>
+        </body>
+    </html>
+    """
 
     # Turn these into plain/html MIMEText objects
     part1 = MIMEText(text, "plain")
@@ -951,7 +992,7 @@ def queueTicker(in_message):
 def ticker_thread_function(name):
     global gTickerQueue
     print("ticker processor starting")
-    running = True;
+    running = True
 
     while True:
         temp_msg = gTickerQueue.get()
@@ -968,7 +1009,6 @@ def ticker_thread_function(name):
         if temp_msg == kUPDATE and not running:
             running = True
             print("resuming ticker processor")
-
 
         if running:
             handleTickerUpdate()
@@ -1033,7 +1073,7 @@ def sortList(in_list, item_to_sort):
         in_list.sort(reverse=True, key=myVolumeFunc)
 
     if item_to_sort == kSortOrderIndexAsc:
-        in_list.sort( key=myIndexFunc)
+        in_list.sort(key=myIndexFunc)
     if item_to_sort == kSortOrderIndexDsc:
         in_list.sort(reverse=True, key=myIndexFunc)
 
@@ -1156,16 +1196,17 @@ def handleTickerUpdate():
 
 
 # =======================================================================================
-# main code
+# Check Sort Order
 # =======================================================================================
 def CheckSortOrder():
     global gCurrentSortOrder
     global gTickers
-    global gCurrentSortOrder
+
     if gCurrentSortOrder:
         UpdateTickers()
         UpdateHeaderString(isPostMarket())
         sortList(gTickers, gCurrentSortOrder)
+
 
 # =======================================================================================
 # main code
@@ -1182,12 +1223,12 @@ def main():
         gMailThread = threading.Thread(target=email_thread_function, args=(1,))
         gMailThread.start()
 
-    gColumns.append(HeaderRec(" ",2))
-    gColumns.append(HeaderRec("Ticker",10))
-    gColumns.append(HeaderRec("Name",26))
-    gColumns.append(HeaderRec("Price",14))
-    gColumns.append(HeaderRec("Open",8))
-    gColumns.append(HeaderRec("% Chg",8))
+    gColumns.append(HeaderRec(" ", 2))
+    gColumns.append(HeaderRec("Ticker", 10))
+    gColumns.append(HeaderRec("Name", 26))
+    gColumns.append(HeaderRec("Price", 14))
+    gColumns.append(HeaderRec("Open", 8))
+    gColumns.append(HeaderRec("% Chg", 8))
     gColumns.append(HeaderRec("Lo    -    Hi", 14))
     gColumns.append(HeaderRec("52 wk low - high", 8))
     gColumns.append(HeaderRec("After Hours", 8))
@@ -1241,6 +1282,7 @@ def main():
                         queueTicker(kSTOP)
                         time.sleep(1)                        
                     print('done')
+                    kb.set_normal_term()
                     exit()
                 if c == 'a':                    # add symbols
                     kb.set_normal_term()
@@ -1297,7 +1339,7 @@ def main():
 
             if not gUseThreading:
                 UpdateMarketStatus()
-    kb.set_normal_term()
+    # kb.set_normal_term()
 
 
 # curses support
