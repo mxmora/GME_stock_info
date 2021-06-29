@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 # import stock_info module from yahoo_fin
+import queue
+
 from yahoo_fin import stock_info as si
 import time
 from tqdm import tqdm
@@ -22,7 +24,22 @@ import queue as que
 import threading
 import json
 import pandas as pd
+import socket
 
+from zeroconf import ServiceBrowser, Zeroconf
+
+# =======================================================================================
+# Bonjour handling class
+# =======================================================================================
+class MyListener:
+
+    def remove_service(self, zeroconf, type, name):
+        print("Service %s removed" % (name,))
+
+    def add_service(self, zeroconf, type, name):
+        info = zeroconf.get_service_info(type, name)
+        print("Service '%s' added, service info: %s" % (name, info))
+        info.addresses
 
 
 # Windows
@@ -39,6 +56,9 @@ else:
 assert sys.version_info >= (3, 0)
 
 
+# =======================================================================================
+# Keyboard handling class
+# =======================================================================================
 class KBHit:
 
     def __init__(self):
@@ -141,10 +161,16 @@ gTickerThread = None
 gTickerQueue = que.Queue(maxsize=10)
 # gTickerQueue = Queue(maxsize=10)
 gPlotQueue = que.Queue(maxsize=10)
-
+gDisplayMessageQueue = que.Queue(maxsize=100)
 # gShowFiftyTwo = 0
 # gShowSorted = True
 # gSendEmail = False
+# gSendToDisplay = True
+
+gSocket = None
+gUseNeworkDisplay = False
+gUseZeroConf = False
+zeroconf = None
 
 
 gColumns = []
@@ -191,7 +217,6 @@ invisible = '\033[08m'
 
 # Default update rate
 updateRate = kWaitTime
-
 
 
 # =======================================================================================
@@ -300,6 +325,7 @@ parser.add_argument('--verbose', help='Enable verbose output. Mostly for debuggi
 parser.add_argument('--alert', help='Ring the bell on new lows and new highs', action='store_true')
 parser.add_argument('--top', type=int, default=0, help='Show top moving stocks, provide a number less than 100')
 parser.add_argument('--file', type=str, default='', help='a file containing a json dict of tickers,name')
+parser.add_argument('--network', type=str, default='', help='IP address of a network display device')
 parser.add_argument('--rate', type=int, help='How many seconds to pause between updates.')
 parser.add_argument('--fiftytwo', help='Show the 52 week high low', action='store_true')
 parser.add_argument('--curses', help='Show the list using curses.', action='store_true')
@@ -322,7 +348,11 @@ gUseFile = args.file != ''
 gFileName = args.file
 gShowGains = args.gains
 gHoldingsDF = None
+gIPAddress = args.network
 
+if gIPAddress != '':
+    print(f"using display at: {gIPAddress}")
+    gUseNeworkDisplay = True
 
 if gShowSorted:
     if gShowSorted.__str__() in valid_sort_options:
@@ -723,6 +753,7 @@ class Ticker:
             if gShowGains:
                 outputStr += self.GetGainsOutputStr()
             outputStr += f" [{self.aftermarketPrice:11.2f}    {self.percentChangeSinceClose:6.1f}% ]"
+            percentChangedStr = f"{self.percentChangeSinceClose:5.1f}%"
         else:
             outputStr += f" [ {self.regularMarketDayLow:9.2f} - {self.regularMarketDayHigh:9.2f} ]{rst}"
             if gShowFiftyTwo:
@@ -731,6 +762,8 @@ class Ticker:
                 outputStr += self.GetGainsOutputStr()
             outputStr += f" {self.marketVolume:>18,d} "
             outputStr += f" {newMarketColor}{newMarketStr}{newMarketDir} {rst}"
+            percentChangedStr = f"{self.percentChange:5.1f}%"
+
 
         print(outputStr)
 
@@ -738,6 +771,12 @@ class Ticker:
         # forceEmail = self.tickerSymbol.upper() == 'GME'
         if gSendEmail and (newMarketStr or forceEmail):
             self.PrepareAndSendEmail(newChartDir, newMarketStr, newMarketDir)
+
+        # forceDisplay = self.tickerSymbol.upper() == 'GME'
+        # forceDisplay = newMarketStr != ''
+
+            if gUseNeworkDisplay:
+                queueMessageToDisplay(f" {self.tickerSymbol.upper()} {self.currentVal:.2f} {percentChangedStr} {newMarketStr} {self.tickerSymbol.upper()}")
 
     def Update(self):
         global gHeaderStr
@@ -1377,7 +1416,7 @@ def handleTickerUpdate():
         for myTicker in gTopMoversTickers:
             myTicker.Update()
 
-    timeStr = now.strftime('%Y-%m-%d %H:%M:%S')
+    timeStr = now.strftime('%Y-%m-%d %H:%M:%S ')
 
     print(f'{timeStr:<19}\n {gHeaderStr}')
 
@@ -1393,6 +1432,8 @@ def handleTickerUpdate():
 
     print('-')
 
+    if gUseNeworkDisplay:
+        sendMessageToDisplay(now.strftime('%H:%M:%S -'))
 
 # =======================================================================================
 # Check Sort Order
@@ -1452,6 +1493,68 @@ def askTopMovers():
 
 
 # =======================================================================================
+# queueMessageToDisplay
+# =======================================================================================
+def queueMessageToDisplay(msg):
+    global gDisplayMessageQueue
+
+    if gUseNeworkDisplay:
+        gDisplayMessageQueue.put(msg)
+        # print(f"Queue message to display at {gIPAddress}:{msg}")
+
+
+# =======================================================================================
+# sendMessageToDisplay
+# =======================================================================================
+def sendMessageToDisplay(msg):
+    # client program
+    global gIPAddress
+    global gSocket
+
+    messageToSend = msg
+
+    if gUseNeworkDisplay:
+        notDone = True
+        while notDone:
+            try:
+                tempmsg = gDisplayMessageQueue.get_nowait()
+                messageToSend += f'{tempmsg} | '
+                if len(messageToSend) > 1024:
+                    break
+            except queue.Empty:
+                notDone = False
+                pass
+
+        print(f"Sending message to display at {gIPAddress}:{msg}")
+        res = gSocket.sendto(messageToSend.encode(), (gIPAddress, 8888))
+        print(f'result={res}')
+        if res:
+            print("\nsuccessfully send")
+
+
+# =======================================================================================
+# ExitCleanly
+# =======================================================================================
+def ExitCleanly():
+    global zeroconf
+
+    print('stopping...')
+    if gSendEmail:
+        queueEmail(kSTOP)
+        time.sleep(1)
+    if gUseThreading:
+        queueTicker(kSTOP)
+        time.sleep(1)
+    print('done')
+
+    print(f"Saving file: {gFileName}")
+    SaveFile()
+    if gUseZeroConf:
+        zeroconf.close()
+    exit()
+
+
+# =======================================================================================
 # main code
 # =======================================================================================
 def main():
@@ -1464,8 +1567,16 @@ def main():
     global gTickerThread
     global gShowTopMovers
     global gShowGains
+    global gSocket
 
-    
+    if gUseNeworkDisplay:
+        gSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        if gUseZeroConf:
+            zeroconf = Zeroconf()
+            listener = MyListener()
+            browser = ServiceBrowser(zeroconf, "_StockDisplay._udp.local.", listener)
+
     if gSendEmail:
         gMailThread = threading.Thread(target=email_thread_function, args=(1,))
         gMailThread.start()
@@ -1502,7 +1613,7 @@ def main():
         gTickerThread.start()
         # use the multiprocessing module to perform the plotting activity in another process (i.e., on another core):
         # job_for_another_core = Process(target=ticker_thread_function, args=(1, gTickerQueue))
-        queueTicker(kUPDATE)
+        # queueTicker(kUPDATE)
         # job_for_another_core.start()
         # job_for_another_core.join()
 
@@ -1519,7 +1630,7 @@ def main():
 
         if isMarketClosed():
             print("Market is now closed.")
-            exit()
+            ExitCleanly()
 
         count = updateRate * 100
         # plt.show()
@@ -1527,19 +1638,8 @@ def main():
             if kb.kbhit():
                 c = kb.getch()
                 if ord(c) == 27 or c == 'q':    # ESC or quit
-                    print('stopping...')
-                    if gSendEmail:
-                        queueEmail(kSTOP)
-                        time.sleep(1)
-                    if gUseThreading:
-                        queueTicker(kSTOP)
-                        time.sleep(1)                        
-                    print('done')
                     kb.set_normal_term()
-                    print(f"Saving file: {gFileName}")
-                    SaveFile()
-
-                    exit()
+                    ExitCleanly()
                 if c == 'a':                    # add symbols
                     kb.set_normal_term()
                     addSymbol()
