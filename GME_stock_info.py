@@ -28,6 +28,10 @@ import socket
 
 from zeroconf import ServiceBrowser, Zeroconf
 
+
+assert sys.version_info >= (3, 0)
+print(sys.version_info)
+
 # =======================================================================================
 # Bonjour handling class
 # =======================================================================================
@@ -166,12 +170,14 @@ gDisplayMessageQueue = que.Queue(maxsize=100)
 # gShowSorted = True
 # gSendEmail = False
 # gSendToDisplay = True
+gFileDirty = False
 
 gSocket = None
 gUseNeworkDisplay = False
 gUseZeroConf = False
 zeroconf = None
-
+gNoMessageCount = 0
+gLastTickerIndex = 0
 
 gColumns = []
 gTickers = []
@@ -457,6 +463,14 @@ class Ticker:
         self.gainsPercent = 0
 
         self.quoteData = GetQuoteData(self.tickerSymbol)
+
+        if self.quoteData == '':
+            print("No yahoo quote data available\n")
+            ExitCleanly()
+
+        #print(self.quoteData)
+        #print(self.quoteData['regularMarketPrice'])
+
         self.currentVal = float(self.quoteData['regularMarketPrice'])
         
         self.lastRegularMarketDayLow = float(self.quoteData['regularMarketDayLow'])
@@ -506,13 +520,22 @@ class Ticker:
 
     def GetTicker(self):
         return self.tickerSymbol
-
+        
+    def GetTickerName(self):
+        return self.tickerName
+        
     def GetPercentChanged(self):
         return self.percentChange
 
     def GetVolume(self):
         return self.marketVolume
 
+    def GetCurrentPrice(self):
+        return self.currentVal
+
+    def GetSummaryStr(self):
+        return f" {self.tickerSymbol} {self.tickerName} ${self.currentVal:9.2f} {self.percentChange:6.2f}%  vol:{self.marketVolume:>18,d}"
+        
     def GetFiftyTwoOutputStr(self):
         return f" [ {self.fiftyTwoWeekLow:9.2f} - {self.fiftyTwoWeekHigh:9.2f} {self.FiftyTwoPercentChange:9.2f}% ]{rst}"
 
@@ -664,31 +687,26 @@ class Ticker:
             self.currentVal = max(self.currentVal, self.regularMarketDayHigh)
             
             newHighStr = f'new market day high: {self.regularMarketDayHigh:9.2f}'
-            if gBell:
-                newHighStr += '\u0007'
+
 
         if self.regularMarketDayLow < self.lastRegularMarketDayLow:
             self.currentVal = min(self.currentVal, self.regularMarketDayLow)
 
             newLowStr = f'new market day low: {self.regularMarketDayLow:9.2f}'
-            if gBell:
-                newLowStr += '\u0007'
+
 
         if gShowFiftyTwo:
             # Check to see if we hit a new 52 week low or high
             if self.currentVal > self.lastFiftyTwoWeekHigh:
                 newHighStr = f'new 52 week high: {self.fiftyTwoWeekHigh:9.2f}'
-                if gBell:
-                    newHighStr += '\u0007'
-                    newHighStr += '\u0007'
+
 
             if self.currentVal < self.lastFiftyTwoWeekLow:
                 newLowStr = f'new 52 week low: {self.fiftyTwoWeekLow:9.2f}'
-                if gBell:
-                    newLowStr += '\u0007'
-                    newLowStr += '\u0007'
+
 
         newMarketStr = ''
+        cleanMarketStr = ''
         newMarketDir = ''
         newChartDir = ''
         newMarketColor = ''
@@ -701,7 +719,12 @@ class Ticker:
         if newLowStr != '':
             newMarketDir = downArrow
             newChartDir = "📉"
-            newMarketStr = newLowStr
+
+            cleanMarketStr = newLowStr
+            newMarketStr = cleanMarketStr
+            if gBell:
+                newMarketStr += '\u0007'
+
             newMarketColor = bg.red
             warningStr = downArrow
             warningColor = bg.red
@@ -712,7 +735,12 @@ class Ticker:
         if newHighStr != '':
             newMarketDir = upArrow
             newChartDir = "📈"
-            newMarketStr = newHighStr
+            cleanMarketStr = newHighStr
+            newMarketStr = cleanMarketStr
+            if gBell:
+                newMarketStr += '\u0007'
+
+
             newMarketColor = bg.green
             warningStr = upArrow
             warningColor = bg.green
@@ -776,7 +804,8 @@ class Ticker:
         # forceDisplay = newMarketStr != ''
 
             if gUseNeworkDisplay:
-                queueMessageToDisplay(f" {self.tickerSymbol.upper()} {self.currentVal:.2f} {percentChangedStr} {newMarketStr} {self.tickerSymbol.upper()}")
+                gNoMessageCount = 0
+                queueMessageToDisplay(f" {self.tickerSymbol.upper()} {self.currentVal:.2f} {percentChangedStr} {cleanMarketStr} {self.tickerSymbol.upper()}")
 
     def Update(self):
         global gHeaderStr
@@ -1219,7 +1248,10 @@ def email_thread_function(name):
 def queueTicker(in_message):
     global gTickerQueue
     global gUseThreading
+    global gNoMessageCount
 
+    # keep track of how many times update was queued as a sign of no info sent to a display
+    gNoMessageCount += 1
     if gUseThreading:
         gTickerQueue.put(in_message)
 
@@ -1392,6 +1424,27 @@ def UpdateTickers():
 
 
 # =======================================================================================
+# GetNextTickerInfo
+# =======================================================================================
+def GetNextTickerInfo():
+    global gLastTickerIndex
+
+    print(f"GetNextTickerInfo: {gLastTickerIndex}")
+    
+    tempTicker = gTickers[gLastTickerIndex]
+
+    msg = tempTicker.GetSummaryStr()
+
+    gLastTickerIndex += 1
+    
+    if gLastTickerIndex >= len(gTickers):
+        gLastTickerIndex = 0
+    
+    print(f"GetNextTickerInfo: {msg}")
+    
+    return msg
+
+# =======================================================================================
 # handleTickerUpdate
 # =======================================================================================
 def handleTickerUpdate():
@@ -1433,7 +1486,19 @@ def handleTickerUpdate():
     print('-')
 
     if gUseNeworkDisplay:
-        sendMessageToDisplay(now.strftime('%H:%M:%S -'))
+    
+        tempMsg = now.strftime('%H:%M:%S -')
+        
+        if isPostMarket():
+            tempMsg += " After Market "
+        if isPreMarket():
+            tempMsg += " Pre-market "
+            
+        if gNoMessageCount > 2:
+            tempMsg += GetNextTickerInfo()
+
+        sendMessageToDisplay(tempMsg)
+
 
 # =======================================================================================
 # Check Sort Order
@@ -1452,7 +1517,7 @@ def CheckSortOrder():
 # SaveFile
 # =======================================================================================
 def SaveFile():
-    if gUseFile:
+    if gUseFile and gFileDirty:
         with open(gFileName, 'w') as convert_file:
             convert_file.write(json.dumps(theTickers))
             print("file written")
@@ -1547,8 +1612,9 @@ def ExitCleanly():
         time.sleep(1)
     print('done')
 
-    print(f"Saving file: {gFileName}")
-    SaveFile()
+    if gFileDirty:
+        print(f"Saving file: {gFileName}")
+        SaveFile()
     if gUseZeroConf:
         zeroconf.close()
     exit()
@@ -1568,6 +1634,8 @@ def main():
     global gShowTopMovers
     global gShowGains
     global gSocket
+    global gFileDirty
+
 
     if gUseNeworkDisplay:
         gSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1643,6 +1711,7 @@ def main():
                 if c == 'a':                    # add symbols
                     kb.set_normal_term()
                     addSymbol()
+                    gFileDirty = True
                     CheckSortOrder()
                     kb = KBHit()
                     count = 0
@@ -1651,6 +1720,7 @@ def main():
                     kb.set_normal_term()
                     deleteSymbol()
                     CheckSortOrder()
+                    gFileDirty = True
                     kb = KBHit()
                     count = 0
                     break
@@ -1701,6 +1771,7 @@ def main():
                     break
                 if c == 'w':
                     queueTicker(kPAUSE)
+                    gFileDirty = True
                     print(f"Saving File {gFileName}...")
                     SaveFile()
                     queueTicker(kUPDATE)
