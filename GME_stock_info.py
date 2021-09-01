@@ -28,7 +28,6 @@ import socket
 
 from zeroconf import ServiceBrowser, Zeroconf
 
-
 assert sys.version_info >= (3, 0)
 print(sys.version_info)
 
@@ -365,6 +364,7 @@ if gShowSorted:
         gCurrentSortOrder = gShowSorted.__str__()
 
 # gLogOutput = True
+gUseHoldings = False
 
 theTickers = {}
 # Adjust the rate of update
@@ -382,13 +382,22 @@ if gUseFile:
         with open(gFileName) as f:
             data = f.read()
             theTickers = json.loads(data)
-            print(theTickers)
-    if os.path.isfile("holdings.csv"):
-        df1 = pd.read_csv('holdings.csv')
-        # print(df1)
+            #print(theTickers)
+    if gUseHoldings:
+        if os.path.isfile("holdings.csv"):
+            df1 = pd.read_csv('holdings.csv')
+            #print(df1)
 
-        gHoldingsDF = df1.set_index("Symbol", drop=False)
-        print(gHoldingsDF)
+            gHoldingsDF = df1.set_index("Symbol", drop=False)
+            #print(gHoldingsDF)
+    else:
+        if os.path.isfile("Positions.xls"):
+            df1 = pd.read_table('Positions.xls', engine='python',header=0, skiprows=7,skipfooter=4,usecols=[0,1,2])
+
+            #print(df1)
+
+            gHoldingsDF = df1.set_index("Symbol", drop=False)
+            #print(gHoldingsDF)
 
 else:
     if args.tickers:
@@ -686,14 +695,12 @@ class Ticker:
         if self.regularMarketDayHigh > self.lastRegularMarketDayHigh:
             self.currentVal = max(self.currentVal, self.regularMarketDayHigh)
             
-            newHighStr = f'new market day high: {self.regularMarketDayHigh:9.2f}'
-
+            newHighStr = f'new market day high: {self.regularMarketDayHigh:9.2f} {self.percentChange:5.1f}%'
 
         if self.regularMarketDayLow < self.lastRegularMarketDayLow:
             self.currentVal = min(self.currentVal, self.regularMarketDayLow)
 
-            newLowStr = f'new market day low: {self.regularMarketDayLow:9.2f}'
-
+            newLowStr = f'new market day low: {self.regularMarketDayLow:9.2f} {self.percentChange:5.1f}%'
 
         if gShowFiftyTwo:
             # Check to see if we hit a new 52 week low or high
@@ -703,7 +710,6 @@ class Ticker:
 
             if self.currentVal < self.lastFiftyTwoWeekLow:
                 newLowStr = f'new 52 week low: {self.fiftyTwoWeekLow:9.2f}'
-
 
         newMarketStr = ''
         cleanMarketStr = ''
@@ -1001,7 +1007,7 @@ def addQuantityAndCost():
     for tempTicker in gTickers:
         ticker = tempTicker.GetTicker()
 
-        print(ticker)
+        # print(ticker)
         try:
             if ticker in gHoldingsDF.values:
                 qty = gHoldingsDF.loc[ticker, "Qty"]
@@ -1075,16 +1081,21 @@ def deleteSymbol():
 # displayHelp Handle argument parsing
 # =======================================================================================
 def displayHelp():
-    print("\n Help Menu")
+    global parser
+    
+    parser.print_help()
+ 
+    print("\n Interactive Help Menu")
     print(" ---------")
     print("Type a 'q' or ESC to exit.")
     print("       'a' to add new symbols to track.")
     print("       'd' to delete symbols in the list")
+    print("       'g' to show gains")
     print("       'h' to display help.")
     print("       'f' to toggle 52 week range display")
     print("       'r' to set a new update rate in seconds")
     print("       's' to sort list")
-    print("       't' to sort list")
+    print("       't' to toggle top movers list")
     print("       'w' to write stocks file")
     print(" ")
     
