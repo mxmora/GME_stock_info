@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/opt/brew/bin/python3
 
 # import stock_info module from yahoo_fin
 import queue
@@ -452,6 +452,7 @@ class bg:
 
 class Ticker:
     def __init__(self, name, sym):
+        self.lastUpdateTime = 0
         self.updateTime = datetime.datetime.now()
         self.startTime = self.updateTime
         self.index = 0
@@ -470,38 +471,39 @@ class Ticker:
         self.costBasis = 0
         self.gains = 0
         self.gainsPercent = 0
+        #print(f"+Self.init({self.tickerSymbol})")
 
-        self.quoteData = GetQuoteData(self.tickerSymbol)
-
-        if self.quoteData == '':
-            print("No yahoo quote data available\n")
-            ExitCleanly()
+        # self.`quoteData` = GetQuoteData(self.tickerSymbol)
+        self.quoteData = ''
+        #if self.quoteData == '':
+        #    print("No yahoo quote data available\n")
+        #    ExitCleanly()
 
         #print(self.quoteData)
         #print(self.quoteData['regularMarketPrice'])
 
-        self.currentVal = float(self.quoteData['regularMarketPrice'])
+        self.currentVal = 0 #float(self.quoteData['regularMarketPrice'])
         
-        self.lastRegularMarketDayLow = float(self.quoteData['regularMarketDayLow'])
-        self.lastRegularMarketDayHigh = float(self.quoteData['regularMarketDayHigh'])
-        self.regularMarketDayLow = float(self.lastRegularMarketDayLow)
-        self.regularMarketDayHigh = float(self.lastRegularMarketDayHigh)
-        self.lastFiftyTwoWeekLow = float(self.quoteData['fiftyTwoWeekLow'])
-        self.lastFiftyTwoWeekHigh = float(self.quoteData['fiftyTwoWeekHigh'])
-        self.marketVolume = int(self.quoteData['regularMarketVolume'])
-        self.fiftyTwoWeekHigh = float(self.lastFiftyTwoWeekHigh)
-        self.fiftyTwoWeekLow = float(self.lastFiftyTwoWeekLow)
-        self.tickerOpen = float(self.quoteData['regularMarketOpen'])
-        self.tickerPrevClose = float(self.quoteData['regularMarketPreviousClose'])
-        self.marketCap = float(self.quoteData.get('marketCap', 0))
-        self.lastVal = self.currentVal
+        self.lastRegularMarketDayLow = 0 #float(self.quoteData['regularMarketDayLow'])
+        self.lastRegularMarketDayHigh = 0 #float(self.quoteData['regularMarketDayHigh'])
+        self.regularMarketDayLow = 0 #float(self.lastRegularMarketDayLow)
+        self.regularMarketDayHigh = 0 #float(self.lastRegularMarketDayHigh)
+        self.lastFiftyTwoWeekLow = 0 #float(self.quoteData['fiftyTwoWeekLow'])
+        self.lastFiftyTwoWeekHigh = 0 #float(self.quoteData['fiftyTwoWeekHigh'])
+        self.marketVolume = 0 #int(self.quoteData['regularMarketVolume'])
+        self.fiftyTwoWeekHigh = 0 #float(self.lastFiftyTwoWeekHigh)
+        self.fiftyTwoWeekLow = 0 #float(self.lastFiftyTwoWeekLow)
+        self.tickerOpen = 0 #float(self.quoteData['regularMarketOpen'])
+        self.tickerPrevClose = 0 #float(self.quoteData['regularMarketPreviousClose'])
+        self.marketCap = 0 #float(self.quoteData.get('marketCap', 0))
+        self.lastVal = 0 #self.currentVal
         self.historyCurVal = []
         self.historyUpdate = []
 
-        self.historyCurVal.append(self.currentVal)
-        hourStr = f"{self.updateTime.hour}:{self.updateTime.minute}"
+        #self.historyCurVal.append(self.currentVal)
+        #hourStr = f"{self.updateTime.hour}:{self.updateTime.minute}"
 
-        self.historyUpdate.append(hourStr)
+        #self.historyUpdate.append(hourStr)
 
     def __repr__(self):
         return "Ticker('{}', {})".format(self.tickerName, self.tickerSymbol)
@@ -707,7 +709,6 @@ class Ticker:
             if self.currentVal > self.lastFiftyTwoWeekHigh:
                 newHighStr = f'new 52 week high: {self.fiftyTwoWeekHigh:9.2f}'
 
-
             if self.currentVal < self.lastFiftyTwoWeekLow:
                 newLowStr = f'new 52 week low: {self.fiftyTwoWeekLow:9.2f}'
 
@@ -746,7 +747,6 @@ class Ticker:
             if gBell:
                 newMarketStr += '\u0007'
 
-
             newMarketColor = bg.green
             warningStr = upArrow
             warningColor = bg.green
@@ -772,12 +772,25 @@ class Ticker:
             prevCloseDirection = upArrow
             txtColor2 = fg.lightgreen
 
+        tempValue = self.currentVal
+        isLessThanaPenny = False
+        trailingstr = " "
+        valueStr = ""
+
+        if tempValue < 0.01:
+            # tempValue = tempValue * 1000
+            isLessThanaPenny = True
+            trailingstr = "k"
+            valueStr = f"{tempValue: 1.6f} "
+        else:
+            valueStr = f"{tempValue: 9.2f} "
+
         if invertText:
-            outputStr = f"{invertBkgndColor}{invertFgColor}{warningStr} {self.tickerSymbol:<8} {self.tickerName:<22} {self.currentVal:9.2f} "
+            outputStr = f"{invertBkgndColor}{invertFgColor}{warningStr} {self.tickerSymbol:<8} {self.tickerName:<22} {valueStr}"
             outputStr += f"{tickerDirection}  "
             outputStr += f" [{self.tickerPrevClose:9.2f} {self.percentChange:5.1f}% {prevCloseDirection} ]{rst}"
         else:
-            outputStr = f"{warningColor}{warningStr}{rst} {self.tickerSymbol:<8} {self.tickerName:<22} {txtColor2}{self.currentVal:9.2f} "
+            outputStr = f"{warningColor}{warningStr}{rst} {self.tickerSymbol:<8} {self.tickerName:<22} {txtColor2}{valueStr}"
             outputStr += f"{txtColor1}{tickerDirection} {rst} "
             outputStr += f" [{txtColor2}{self.tickerPrevClose:9.2f} {self.percentChange:5.1f}% {prevCloseDirection} {rst}]"
 
@@ -798,7 +811,6 @@ class Ticker:
             outputStr += f" {newMarketColor}{newMarketStr}{newMarketDir} {rst}"
             percentChangedStr = f"{self.percentChange:5.1f}%"
 
-
         print(outputStr)
 
         forceEmail = False
@@ -815,6 +827,9 @@ class Ticker:
 
     def Update(self):
         global gHeaderStr
+        # print(f"+Self.Update({self.tickerSymbol})")
+
+        self.lastUpdateTime = self.updateTime
         self.updateTime = datetime.datetime.now()
         self.lastVal = self.currentVal
         self.lastRegularMarketDayLow = min(self.regularMarketDayLow, self.lastRegularMarketDayLow)
@@ -823,6 +838,7 @@ class Ticker:
         self.lastFiftyTwoWeekHigh = max(self.fiftyTwoWeekHigh, self.lastFiftyTwoWeekHigh)
                 
         # self.currentVal = si.get_live_price(self.tickerSymbol)
+
         self.quoteData = GetQuoteData(self.tickerSymbol)
  
         self.regularMarketDayLow = min(self.quoteData['regularMarketDayLow'], self.regularMarketDayLow)
@@ -843,9 +859,9 @@ class Ticker:
             self.gainsPercent = ((currentTotalValue - totalCost) / totalCost) * 100
 
         # print(f"{self.tickerSymbol}: Gain: {self.gains:.2f}")
-        self.historyCurVal.append(self.currentVal)
-        hourStr = f"{self.updateTime.hour}:{self.updateTime.minute}"
-        self.historyUpdate.append(hourStr)
+        #self.historyCurVal.append(self.currentVal)
+        #hourStr = f"{self.updateTime.hour}:{self.updateTime.minute}"
+        #self.historyUpdate.append(hourStr)
 
         UpdateHeaderString(isPostMarket())
         
@@ -862,21 +878,20 @@ class Ticker:
         self.percentChange = 0 if self.tickerPrevClose == 0 else ((self.currentVal - self.tickerPrevClose) / self.tickerPrevClose) * 100
         self.FiftyTwoPercentChange = ((self.currentVal - self.fiftyTwoWeekLow) / self.currentVal) * 100
         self.percentChangeSinceOpen = 0 if self.tickerOpen == 0 else ((self.currentVal - self.tickerOpen) / self.tickerOpen) * 100
+        # print(f"-Self.Update({self.tickerSymbol})")
 
 
-# =======================================================================================
-# Utility functions
 # =======================================================================================
 def isPreMarket():
     return pre_market
 
 
-# ------------------------------------------
+# =======================================================================================
 def isPostMarket():
     return post_market
 
 
-# ------------------------------------------
+# =======================================================================================
 def isMarketClosed():
     return market_closed
 
@@ -898,6 +913,7 @@ def UpdateMarketStatus():
     global market_closed
     global regular_market
 
+    #print(f"UpdateMarketStatus: ")
     market_status = GetQuoteData(kMARKET)
 
     debugLog(f"Market Status: {market_status}")
@@ -927,6 +943,7 @@ def UpdateMarketStatus():
 def GetQuoteData(tickerSymbol):
     quoteData = ''
 
+    #print(f"+GetQuoteData: {tickerSymbol}")
     try:
     
         if tickerSymbol == kMARKET:
@@ -955,6 +972,7 @@ def GetQuoteData(tickerSymbol):
         print(e.message)
         pass
 
+    #print(f"-GetQuoteData: ")
     return quoteData
 
 
@@ -1004,23 +1022,24 @@ def addQuantityAndCost():
     global gTickers
     global gHoldingsDF
     
-    for tempTicker in gTickers:
-        ticker = tempTicker.GetTicker()
+    if gHoldingsDF is not None:
+        for tempTicker in gTickers:
+            ticker = tempTicker.GetTicker()
 
-        # print(ticker)
-        try:
-            if ticker in gHoldingsDF.values:
-                qty = gHoldingsDF.loc[ticker, "Qty"]
-                cost = gHoldingsDF.loc[ticker, "Cost"]
-                if qty:
-                    tempTicker.SetQuantity(qty)
-                if cost:
-                    tempTicker.SetCostBasis(cost)
-        except Exception as e:
-            print(e.__doc__)
-            print(e.message)
-            pass
-            continue
+            # print(ticker)
+            try:
+                if ticker in gHoldingsDF.to_numpy():
+                    qty = gHoldingsDF.loc[ticker, "Qty"]
+                    cost = gHoldingsDF.loc[ticker, "Cost"]
+                    if qty:
+                        tempTicker.SetQuantity(qty)
+                    if cost:
+                        tempTicker.SetCostBasis(cost)
+            except Exception as e:
+                print(e.__doc__)
+                print(e.message)
+                pass
+                continue
 
 
 # =======================================================================================
@@ -1262,6 +1281,7 @@ def queueTicker(in_message):
     global gNoMessageCount
 
     # keep track of how many times update was queued as a sign of no info sent to a display
+    # print(f"queueTicker: gNoMessageCount={gNoMessageCount} gUseThreading={gUseThreading} in_message={in_message}")
     gNoMessageCount += 1
     if gUseThreading:
         gTickerQueue.put(in_message)
@@ -1276,6 +1296,7 @@ def ticker_thread_function(name):
     running = True
 
     while True:
+        #print(f"ticker_thread_function blocking on get")
         temp_msg = gTickerQueue.get()
         debugLog(f"got message {temp_msg}")
         if temp_msg == kSTOP:
@@ -1293,7 +1314,8 @@ def ticker_thread_function(name):
 
         if running:
             handleTickerUpdate()
-        UpdateMarketStatus()        
+        UpdateMarketStatus()
+
         
     print("ticker processor stopped")
 
@@ -1364,6 +1386,7 @@ def sortList(in_list, item_to_sort):
 # =======================================================================================
 def SetSortOrder(newSortOrder):
     global gCurrentSortOrder
+    global gTopMoversTickers
 
     if newSortOrder == kSortOrderTickerAsc:
         print("sorting by ticker ascending")
@@ -1399,6 +1422,7 @@ def SetSortOrder(newSortOrder):
 
     if newSortOrder in valid_sort_options:
         sortList(gTickers, gCurrentSortOrder)
+        sortList(gTopMoversTickers, gCurrentSortOrder)
 
     UpdateHeaderString(isPostMarket())
 
@@ -1452,8 +1476,8 @@ def GetNextTickerInfo():
         gLastTickerIndex = 0
     
     print(f"GetNextTickerInfo: {msg}")
-    
     return msg
+
 
 # =======================================================================================
 # handleTickerUpdate
@@ -1467,6 +1491,7 @@ def handleTickerUpdate():
     global gHeaderStr
 
     now = datetime.datetime.now()
+    print(f"+handleTickerUpdate: {now}")
 
     # update the list of symbols
     UpdateTickers()
@@ -1474,6 +1499,7 @@ def handleTickerUpdate():
     # if the list is sorted update the sort list
     if gCurrentSortOrder:
         sortList(gTickers, gCurrentSortOrder)
+        sortList(gTopMoversTickers, gCurrentSortOrder)
 
     # if there are top movers to show
     if gTopMoversTickers:
@@ -1509,7 +1535,9 @@ def handleTickerUpdate():
             tempMsg += GetNextTickerInfo()
 
         sendMessageToDisplay(tempMsg)
-
+        
+    now = datetime.datetime.now()
+    print(f"-handleTickerUpdate: {now}")
 
 # =======================================================================================
 # Check Sort Order
@@ -1517,11 +1545,13 @@ def handleTickerUpdate():
 def CheckSortOrder():
     global gCurrentSortOrder
     global gTickers
+    global gTopMoversTickers
 
     if gCurrentSortOrder:
         UpdateTickers()
         UpdateHeaderString(isPostMarket())
         sortList(gTickers, gCurrentSortOrder)
+        sortList(gTopMoversTickers, gCurrentSortOrder)
 
 
 # =======================================================================================
@@ -1532,7 +1562,6 @@ def SaveFile():
         with open(gFileName, 'w') as convert_file:
             convert_file.write(json.dumps(theTickers))
             print("file written")
-
 
 
 # =======================================================================================
@@ -1647,7 +1676,6 @@ def main():
     global gSocket
     global gFileDirty
 
-
     if gUseNeworkDisplay:
         gSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -1678,6 +1706,7 @@ def main():
     SetupTopMovers()
 
     # build up main listing
+    print( "build up main listing")
     for ticker, tickerName in theTickers.items():
         tempTicker = Ticker(tickerName, ticker)
         tempTicker.SetIndex(len(gTickers))
@@ -1698,13 +1727,15 @@ def main():
 
     kb = KBHit()
 
+    #print( "CheckSortOrder")
     CheckSortOrder()
 
+    #print( "start loop")
     while 1:
         if not gUseThreading:
             handleTickerUpdate()
         else:
-            print("queue update")
+            #print(" gUseThreading queue update")
             queueTicker(kUPDATE)
 
         if isMarketClosed():
@@ -1790,16 +1821,17 @@ def main():
 
             if count == 0:
                 if gUseThreading:
-                    print("sending an update message")
+                    #print("sending an update message")
                     queueTicker(kUPDATE)
             else:
+                # print(f"{count}")
                 count -= 1
+
             time.sleep(.01)  # Sleep for 10ms seconds
 
             if not gUseThreading:
                 UpdateMarketStatus()
     # kb.set_normal_term()
-
 
 
 # curses support
