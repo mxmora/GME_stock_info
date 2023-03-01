@@ -1,7 +1,7 @@
 #!/usr/local/bin/python3
 
 # <xbar.title>Stock Ticker</xbar.title>
-# <xbar.version>1.0</xbar.version>
+# <xbar.version>1.1</xbar.version>
 # <xbar.author>Matt Mora</xbar.author>
 # <xbar.author.github>?</xbar.author.github>
 # <xbar.desc>Provides a rotating stock ticker in your menu bar, with color and percentage changes</xbar.desc>
@@ -19,7 +19,7 @@ import pandas as pd
 # -----------------------------------------------------------------------------
 
 gTickers = []
- 
+kMARKET = 'MARKET'
 gFileName = "/Users/mmora/Dev/GME_stock_info/stocks.txt" 
 downArrow = '⬇'
 upArrow = '⬆'
@@ -27,9 +27,56 @@ font="Menlo"
 font_size="16"
 after_hours = False
 
+
+# =======================================================================================
+# GetQuoteData
+# =======================================================================================
+def GetQuoteData(tickerSymbol):
+    quoteData = ''
+
+    #print(f"+GetQuoteData: {tickerSymbol}")
+    try:
+    
+        if tickerSymbol == kMARKET:
+            quoteData = si.get_market_status()
+        else:
+            quoteData = si.get_quote_data(tickerSymbol)
+            
+    except KeyboardInterrupt:
+        pass
+    except ConnectionError:
+        pass
+    except TypeError:
+        print("network may be down")
+        pass
+    except OSError as e:
+        if e.errno == 50:
+            exit()
+    except AssertionError:
+        if gLogOutput:
+            print("assertion error. Likely data not available")
+        else:
+            print("something is up... hold on...")
+        pass
+    except Exception as e:
+        print(e.__doc__)
+        print(e.message)
+        pass
+
+    #print(f"-GetQuoteData: ")
+    return quoteData
+
+
 # this is a wonky way to get status
+qd = GetQuoteData(kMARKET)
+
+if qd == '' :
+    print("no connection")
+    exit()
+    
 status = si.get_market_status()
-print(f"$ {status}")
+
+#print(f"$ {status}")
 # status == "POST" or
 if status == "POSTPOST" or status == "CLOSED":
     if status == "POSTPOST":
@@ -126,7 +173,11 @@ for stock_symbol in stock_symbols:
         topStr += f"{paddedstr[0:8]} {price_current:8.2f} | trim=false color={color}\n"
 
 sorted_df = df.sort_values(by='% Chng', ascending=False)
-outputStr = ''
+
+versionStr = "        version 1.1"
+outputStr = f"{versionStr}"
+outputStr += f"| font=Menlo-Bold size=12 trim=false color=blue\n"
+
 
 for index, row in sorted_df.iterrows():
     stock_symbol = row.get(key = 'Ticker')
